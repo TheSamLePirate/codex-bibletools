@@ -27,6 +27,7 @@ extern void gtk_main_quit(void);
 extern GtkWidget *gtk_window_new(int window_type);
 extern void gtk_window_set_title(gpointer window, const gchar *title);
 extern void gtk_window_set_default_size(gpointer window, int width, int height);
+extern void gtk_window_set_icon(gpointer window, gpointer icon);
 extern void gtk_widget_set_app_paintable(gpointer widget, gboolean app_paintable);
 extern int gtk_widget_get_allocated_width(gpointer widget);
 extern int gtk_widget_get_allocated_height(gpointer widget);
@@ -335,6 +336,17 @@ CAMLprim value caml_gtk_window_set_default_size_bc(value *argv, int argn)
 {
   (void)argn;
   return caml_gtk_window_set_default_size(argv[0], argv[1], argv[2]);
+}
+
+CAMLprim value caml_gtk_window_set_icon_from_file(value widget, value path)
+{
+  CAMLparam2(widget, path);
+  gpointer pixbuf = gdk_pixbuf_new_from_file(String_val(path), NULL);
+  if (pixbuf != NULL) {
+    gtk_window_set_icon(unwrap_ptr(widget), pixbuf);
+    g_object_unref(pixbuf);
+  }
+  CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_gtk_window_enable_cross_background(value widget, value path)

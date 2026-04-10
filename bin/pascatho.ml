@@ -114,6 +114,8 @@ let render_articles () =
   let articles = Article_store.list ~root in
   Ok (articles |> List.map (fun (article : Article_store.article) -> article.name) |> String.concat "\n")
 
+let render_project_root () = root ()
+
 let render_article name =
   let* root = root () in
   Article_store.read ~root ~name
@@ -525,6 +527,7 @@ let commands =
     mk_cmd "status" "Indique les possibilités de navigation." Term.(const (fun translation reference -> Stdlib.exit (print_or_fail (render_status translation reference))) $ translation $ reference);
     mk_cmd "lucky" "Choisit un verset aléatoire." Term.(const (fun translation book -> Stdlib.exit (print_or_fail (render_lucky translation book))) $ translation $ book_arg);
     mk_cmd "search" "Recherche dans les sources Vatican." Term.(const (fun query sources -> Stdlib.exit (print_or_fail (render_search sources query))) $ query $ sources_arg);
+    mk_cmd "project-root" "Affiche la racine du projet résolue." Term.(const (fun () -> Stdlib.exit (print_or_fail (render_project_root ()))) $ const ());
     mk_cmd "articles" "Liste les articles markdown disponibles." Term.(const (fun () -> Stdlib.exit (print_or_fail (render_articles ()))) $ const ());
     mk_cmd "article" "Affiche un article markdown." Term.(const (fun name -> Stdlib.exit (print_or_fail (render_article name))) $ name_arg);
   ]
@@ -533,6 +536,7 @@ let main () =
   if Array.length Sys.argv = 1 then
     (match root () with
     | Ok root ->
+        Unix.putenv Project_root.env_var root;
         let backend = Filename.concat root "_build/default/bin/pascatho.exe" in
         let _ = Gtk_ui.launch backend in
         0

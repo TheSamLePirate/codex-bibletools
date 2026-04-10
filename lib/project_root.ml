@@ -1,3 +1,5 @@
+let env_var = "PASCATHO_ROOT"
+
 let is_project_root path =
   Sys.file_exists (Filename.concat path "dune-project") || Sys.file_exists (Filename.concat path "bibleTools.js")
 
@@ -25,7 +27,7 @@ let executable_search_paths () =
   [ executable_dir; Filename.dirname executable_dir; Filename.dirname (Filename.dirname executable_dir) ]
 
 let env_search_paths () =
-  [ Sys.getenv_opt "DUNE_SOURCEROOT"; Sys.getenv_opt "BUILD_PATH_PREFIX_MAP"; Sys.getenv_opt "PWD" ]
+  [ Sys.getenv_opt env_var; Sys.getenv_opt "DUNE_SOURCEROOT"; Sys.getenv_opt "BUILD_PATH_PREFIX_MAP"; Sys.getenv_opt "PWD" ]
   |> List.filter_map (fun value -> value)
   |> List.map (fun value ->
          match String.split_on_char '=' value with

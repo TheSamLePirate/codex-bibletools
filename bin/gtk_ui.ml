@@ -522,9 +522,11 @@ let make_ui backend =
   Gtk_bindings.init ();
   let project_root = project_root_from_backend backend in
   let background_path = Filename.concat project_root "bg.jpeg" in
+  let logo_path = Filename.concat project_root "logo.jpeg" in
   let window = Gtk_bindings.window_new () in
-  Gtk_bindings.window_set_title window "Pascatho";
+  Gtk_bindings.window_set_title window "pas catho";
   Gtk_bindings.window_set_default_size window ~width:1200 ~height:850;
+  Gtk_bindings.window_set_icon_from_file window logo_path;
   Gtk_bindings.window_enable_cross_background window background_path;
   let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:4 in
   let row1 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
@@ -565,7 +567,6 @@ let make_ui backend =
   let zoom_in_button = Gtk_bindings.button_new "A+" in
   let goto_button = Gtk_bindings.button_new ">" in
   let back_button = Gtk_bindings.button_new "Back" in
-  let logo_path = Filename.concat project_root "logo.jpeg" in
   let highlights = load_highlights project_root in
   let logo_image = Gtk_bindings.image_new_from_file logo_path in
   Gtk_bindings.flow_box_set_selection_mode source_flow 0;

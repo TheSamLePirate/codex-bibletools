@@ -8,6 +8,7 @@ external main_quit : unit -> unit = "caml_gtk_main_quit"
 external window_new : unit -> widget = "caml_gtk_window_new"
 external window_set_title : widget -> string -> unit = "caml_gtk_window_set_title"
 external window_set_default_size : widget -> width:int -> height:int -> unit = "caml_gtk_window_set_default_size_bc" "caml_gtk_window_set_default_size"
+external window_set_icon_from_file : widget -> string -> unit = "caml_gtk_window_set_icon_from_file"
 external window_enable_cross_background : widget -> string -> unit = "caml_gtk_window_enable_cross_background"
 
 external box_new : vertical:bool -> spacing:int -> widget = "caml_gtk_box_new_bc" "caml_gtk_box_new"

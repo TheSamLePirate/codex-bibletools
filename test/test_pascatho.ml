@@ -343,6 +343,11 @@ let () =
   let binary = Filename.concat root "_build/default/bin/pascatho.exe" in
   let translations_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "translations" ] in
   assert_true (translations_lines <> []) "Le binaire doit retrouver la racine du projet même hors du dépôt.";
+  Unix.putenv Project_root.env_var root;
+  let project_root_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "project-root" ] in
+  assert_true
+    (project_root_lines = [ root ])
+    "Le backend doit privilégier la racine explicitement transmise via l'environnement.";
   let chapter_lines =
     run_command_capture_lines
       [ binary; "chapter"; "--translation"; "bible_aelf"; "--reference"; "Jn 1,1" ]
