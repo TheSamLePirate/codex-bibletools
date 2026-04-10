@@ -1,17 +1,61 @@
-# Interface TK dans un projet ocaml, pour présenter des textes bibliques.
+# Pascatho
 
-C'est le portage du site web dont le moteur se trouve dans `bibleTools.js`
+Application OCaml locale pour explorer plusieurs corpus religieux et doctrinaux depuis une interface GTK native.
 
-Pour ce projet, quand on parle de référence bibliques ou textuelles, on se réfère aux regexps décrites dans `bibleTools.js` qui permet de sélectionner un ou plusieurs versets à afficher.
+Le projet reprend la logique de sélection et de références décrite dans [`bibleTools.js`](./bibleTools.js) et [`sources.js`](./sources.js), puis l’expose via :
+- une interface graphique GTK native en OCaml/C
+- un backend CLI `pascatho`
+- des tests unitaires et d’intégration sous Dune
 
-Le dossier lib doit contenir des .ml qui permettent de gérer la lecture des JSONS. On doit avoir un .mli qui décrit l'interface des modules de lecture de jsons.
+## Fonctionnalités
 
-Le fichier bin/pascatho.ml doit contenir l'interface TK du projet.
+- lecture de plusieurs traductions bibliques JSON
+- navigation par référence libre ou par sélecteurs hiérarchiques
+- affichage de sources multiples :
+  - `Bible`
+  - `Coran`
+  - `Vatican`
+  - `Can`, `Can1917`, `Can1990`
+  - `Catechisme`, `CatechismeE`, `CatechismeX`, `CatechismeTrente`
+  - `Compendium`, `CompendiumSocial`
+  - `Rael`
+  - `Hadiths`, `Hadiths2`
+- navigation `précédent`, `suivant`, `chapitre`, et ajout de verset avant/après
+- affichage d’articles Markdown avec liens internes vers les références du corpus
+- mise en évidence de mots-clés via le fichier [`highlights`](./highlights)
+- recherche textuelle dans le corpus Vatican
 
-L'interface doit permettre :
-- de configurer quelle bible on veut lire (quelle traduction)
-- de sélectionner un verset de par sa référence, on doit avoir des boutons : verset suivant/précédent, ajouter verset suivant/précédent, chapitre complet, capitre suivant/précédent. Ces boutons doivent être activés ou désactivés selon la pagination
-- d'afficher un markdown (placé dans le dossier articles) qui contient des références textuelles vers les versets.
-- un bouton `get lucky` qui permet de choisir au hasard un verset à afficher dans une sous sélection (exemple : on doit pouvoir choisir bible, un livre de la bible, et `get lucky` lancera un chapitre aléatoire et un verset aléatoire.
+## Structure
 
-On doit avoir un moteur de recherche aussi, qui permet de sélectionner une sous partie des sources, et de rechercher. Ce moteur doit-être vraiment évolutif, dans un premier temps moteur de correspondance pure dans le texte, mais on utilisera des algorithmes plus évolués par la suite. Le moteur doit être lançable depuis l'interface mais un fichier bin/searchReIndex.ml peut être utilisé pour gérer l'indexation.
+- [`lib/`](./lib) : logique métier
+- [`bin/`](./bin) : exécutable principal et bindings GTK
+- [`test/`](./test) : tests
+- [`articles/`](./articles) : articles Markdown
+- [`datas/`](./datas) : corpus JSON
+
+## Lancement rapide
+
+Depuis le dépôt :
+
+```bash
+dune exec pascatho
+```
+
+Quelques commandes CLI utiles :
+
+```bash
+dune exec pascatho -- translations
+dune exec pascatho -- show-ref --translation bible_aelf --reference "Jn 1,1"
+dune exec pascatho -- search --query "foi"
+```
+
+## Développement
+
+Validation locale :
+
+```bash
+dune build
+dune runtest
+```
+
+Pour l’installation détaillée sous Debian/Ubuntu via WSL, voir [`INSTALL.md`](./INSTALL.md).
