@@ -10,6 +10,7 @@ external window_set_title : widget -> string -> unit = "caml_gtk_window_set_titl
 external window_set_default_size : widget -> width:int -> height:int -> unit = "caml_gtk_window_set_default_size_bc" "caml_gtk_window_set_default_size"
 external window_set_icon_from_file : widget -> string -> unit = "caml_gtk_window_set_icon_from_file"
 external window_enable_cross_background : widget -> string -> unit = "caml_gtk_window_enable_cross_background"
+external widget_grab_focus : widget -> unit = "caml_gtk_widget_grab_focus"
 
 external box_new : vertical:bool -> spacing:int -> widget = "caml_gtk_box_new_bc" "caml_gtk_box_new"
 external flow_box_new : unit -> widget = "caml_gtk_flow_box_new"
@@ -41,6 +42,7 @@ external combo_box_set_active : widget -> int -> unit = "caml_gtk_combo_box_set_
 
 external scrolled_window_new : unit -> widget = "caml_gtk_scrolled_window_new"
 external scrolled_window_set_policy : widget -> h:int -> v:int -> unit = "caml_gtk_scrolled_window_set_policy_bc" "caml_gtk_scrolled_window_set_policy"
+external scrolled_window_scroll_vertical_ratio : widget -> float -> unit = "caml_gtk_scrolled_window_scroll_vertical_ratio"
 
 external text_view_new : unit -> widget = "caml_gtk_text_view_new"
 external text_view_set_wrap_mode : widget -> int -> unit = "caml_gtk_text_view_set_wrap_mode"
@@ -61,3 +63,4 @@ external connect_clicked : widget -> (unit -> unit) -> unit = "caml_gtk_connect_
 external connect_changed : widget -> (unit -> unit) -> unit = "caml_gtk_connect_changed"
 external connect_activate : widget -> (unit -> unit) -> unit = "caml_gtk_connect_activate"
 external connect_activate_link : widget -> (string -> unit) -> unit = "caml_gtk_connect_activate_link"
+external connect_ctrl_f : widget -> (unit -> unit) -> unit = "caml_gtk_connect_ctrl_f"

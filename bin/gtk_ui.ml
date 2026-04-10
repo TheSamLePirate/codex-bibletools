@@ -25,15 +25,24 @@ type t = {
   mutable current_title : string;
   mutable current_body : string;
   mutable current_references : string option;
+  mutable current_markup : string;
   mutable displayed_refs : string list;
   mutable source : string;
   mutable source_labels : (string, string list) Hashtbl.t;
   mutable status : string;
   mutable text_size : int;
   mutable title_size : int;
+  mutable search_query : string;
+  mutable search_index : int;
   highlights : string list;
   mutable history : View_history.t;
   window : Gtk_bindings.widget;
+  scroll : Gtk_bindings.widget;
+  search_row : Gtk_bindings.widget;
+  search_entry : Gtk_bindings.widget;
+  search_prev_button : Gtk_bindings.widget;
+  search_next_button : Gtk_bindings.widget;
+  search_count_label : Gtk_bindings.widget;
   status_label : Gtk_bindings.widget;
   title_label : Gtk_bindings.widget;
   ref_label : Gtk_bindings.widget;
@@ -96,6 +105,56 @@ let plain_markup ui text references =
   Article_markdown.render_source_to_pango_markup ~highlights:ui.highlights ?references text
   |> String.split_on_char '\n' |> String.concat "&#10;"
 
+let refresh_search ui =
+  let query = String.trim ui.search_query in
+  if query = "" then (
+    Gtk_bindings.label_set_markup ui.output_label ui.current_markup;
+    Gtk_bindings.label_set_text ui.search_count_label "0/0";
+    Gtk_bindings.widget_set_sensitive ui.search_prev_button false;
+    Gtk_bindings.widget_set_sensitive ui.search_next_button false;
+    Gtk_bindings.scrolled_window_scroll_vertical_ratio ui.scroll 0.0)
+  else
+    let result = Article_markdown.highlight_search_markup ~needle:query ~current:ui.search_index ui.current_markup in
+    let effective_index =
+      match result.current with Some index -> index | None -> 0
+    in
+    ui.search_index <- effective_index;
+    Gtk_bindings.label_set_markup ui.output_label result.markup;
+    Gtk_bindings.label_set_text ui.search_count_label
+      (if result.count = 0 then "0/0" else Printf.sprintf "%d/%d" (effective_index + 1) result.count);
+    Gtk_bindings.widget_set_sensitive ui.search_prev_button (result.count > 0);
+    Gtk_bindings.widget_set_sensitive ui.search_next_button (result.count > 0);
+    (match result.current_offset with
+    | Some offset when result.visible_length > 0 ->
+        Gtk_bindings.scrolled_window_scroll_vertical_ratio ui.scroll
+          (float_of_int offset /. float_of_int result.visible_length)
+    | _ -> Gtk_bindings.scrolled_window_scroll_vertical_ratio ui.scroll 0.0)
+
+let hide_search ui =
+  ui.search_query <- "";
+  ui.search_index <- 0;
+  Gtk_bindings.entry_set_text ui.search_entry "";
+  Gtk_bindings.widget_hide ui.search_row;
+  refresh_search ui
+
+let open_search ui =
+  Gtk_bindings.widget_show ui.search_row;
+  Gtk_bindings.widget_grab_focus ui.search_entry;
+  refresh_search ui
+
+let update_search_query ui query =
+  ui.search_query <- query;
+  ui.search_index <- 0;
+  refresh_search ui
+
+let step_search ui delta =
+  let query = String.trim ui.search_query in
+  if query <> "" then
+    let result = Article_markdown.highlight_search_markup ~needle:query ~current:ui.search_index ui.current_markup in
+    if result.count > 0 then (
+      ui.search_index <- (ui.search_index + delta + result.count) mod result.count;
+      refresh_search ui)
+
 let reference_summary refs =
   match refs with
   | [] -> ""
@@ -108,9 +167,10 @@ let set_output ui ~title ~reference ~body ~references =
   ui.current_title <- title;
   ui.current_body <- body;
   ui.current_references <- references;
+  ui.current_markup <- plain_markup ui body references;
   Gtk_bindings.label_set_text ui.title_label title;
   Gtk_bindings.label_set_text ui.ref_label reference;
-  Gtk_bindings.label_set_markup ui.output_label (plain_markup ui body references)
+  refresh_search ui
 
 let translation_of_ui ui = ui.translation
 
@@ -395,10 +455,13 @@ let render_article_by_name ui article =
           ~resolve_internal:(resolve_internal_article_url ui) body
       in
       record_view ui (View_history.Article article);
+      ui.current_body <- body;
+      ui.current_references <- None;
+      ui.current_markup <- markup;
       ui.displayed_refs <- [];
       Gtk_bindings.label_set_text ui.title_label article;
       Gtk_bindings.label_set_text ui.ref_label "";
-      Gtk_bindings.label_set_markup ui.output_label markup;
+      refresh_search ui;
       set_status ui ("Article: " ^ article);
       Gtk_bindings.widget_set_sensitive ui.chapter_button false;
       Gtk_bindings.widget_set_sensitive ui.append_prev_button false;
@@ -512,6 +575,7 @@ let make_ui root names =
   Gtk_bindings.window_enable_cross_background window background_path;
   let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:4 in
   let row1 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
+  let search_row = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let row2 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let source_row = Gtk_bindings.box_new ~vertical:false ~spacing:4 in
   let source_flow = Gtk_bindings.flow_box_new () in
@@ -541,6 +605,11 @@ let make_ui root names =
   let scroll = Gtk_bindings.scrolled_window_new () in
   let show_button = Gtk_bindings.button_new "Afficher" in
   let copy_button = Gtk_bindings.button_new "📋" in
+  let search_button = Gtk_bindings.button_new "🔍" in
+  let search_entry = Gtk_bindings.entry_new () in
+  let search_prev_button = Gtk_bindings.button_new "Précédent" in
+  let search_next_button = Gtk_bindings.button_new "Suivant" in
+  let search_count_label = create_label "0/0" in
   let chapter_button = Gtk_bindings.button_new "Chapitre" in
   let append_prev_button = Gtk_bindings.button_new "+" in
   let prev_button = Gtk_bindings.button_new "Précédent" in
@@ -557,7 +626,7 @@ let make_ui root names =
   Gtk_bindings.scrolled_window_set_policy scroll ~h:1 ~v:1;
   Gtk_bindings.container_add scroll output_label;
   List.iter (Gtk_bindings.box_pack_start root_box ~expand:false ~fill:false ~padding:0)
-    [ row1; row2; source_row; title_label; ref_label ];
+    [ row1; search_row; row2; source_row; title_label; ref_label ];
   Gtk_bindings.box_pack_start source_row source_flow ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start source_row goto_button ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start source_row lucky_button ~expand:false ~fill:false ~padding:0;
@@ -578,15 +647,24 @@ let make_ui root names =
       current_title = "";
       current_body = "";
       current_references = None;
+      current_markup = "";
       displayed_refs = [];
       source = "";
       source_labels = Hashtbl.create 16;
       status = "";
       text_size = 16;
       title_size = 22;
+      search_query = "";
+      search_index = 0;
       highlights;
       history = View_history.empty;
       window;
+      scroll;
+      search_row;
+      search_entry;
+      search_prev_button;
+      search_next_button;
+      search_count_label;
       status_label;
       title_label;
       ref_label;
@@ -625,6 +703,12 @@ let make_ui root names =
   pack_widget row1 reference_entry;
   pack_widget row1 show_button;
   pack_widget row1 copy_button;
+  pack_widget row1 search_button;
+  pack_label search_row "Recherche";
+  Gtk_bindings.box_pack_start search_row search_entry ~expand:true ~fill:true ~padding:0;
+  pack_widget search_row search_prev_button;
+  pack_widget search_row search_next_button;
+  pack_widget search_row search_count_label;
   List.iter (pack_widget row2) [ chapter_button; append_prev_button; prev_button; next_button; append_next_button ];
   Gtk_bindings.container_add source_flow source_combo.widget;
   Array.iter
@@ -639,25 +723,38 @@ let make_ui root names =
   Gtk_bindings.entry_set_text reference_entry ui.current_ref;
   apply_font_sizes ui;
   Gtk_bindings.connect_destroy window Gtk_bindings.main_quit;
-  Gtk_bindings.connect_clicked show_button (fun () -> show_reference ui (Gtk_bindings.entry_get_text reference_entry));
+  Gtk_bindings.connect_clicked show_button (fun () ->
+      hide_search ui;
+      show_reference ui (Gtk_bindings.entry_get_text reference_entry));
   Gtk_bindings.connect_clicked copy_button (fun () ->
+      hide_search ui;
       let reference = String.trim ui.current_ref in
       if reference <> "" then Gtk_bindings.widget_copy_text_to_clipboard window reference);
+  Gtk_bindings.connect_clicked search_button (fun () -> open_search ui);
+  Gtk_bindings.connect_changed search_entry (fun () -> update_search_query ui (Gtk_bindings.entry_get_text search_entry));
+  Gtk_bindings.connect_activate search_entry (fun () -> step_search ui 1);
+  Gtk_bindings.connect_clicked search_prev_button (fun () -> step_search ui (-1));
+  Gtk_bindings.connect_clicked search_next_button (fun () -> step_search ui 1);
   Gtk_bindings.connect_clicked chapter_button (fun () ->
+      hide_search ui;
       match chapter_target ui (Gtk_bindings.entry_get_text reference_entry |> String.trim) with
       | Some reference -> show_reference ui reference
       | None -> set_status ui "Chapitre indisponible pour cette source");
-  Gtk_bindings.connect_clicked append_prev_button (fun () -> append_reference ui "previous");
-  Gtk_bindings.connect_clicked prev_button (fun () -> navigate ui "previous");
-  Gtk_bindings.connect_clicked next_button (fun () -> navigate ui "next");
-  Gtk_bindings.connect_clicked append_next_button (fun () -> append_reference ui "next");
+  Gtk_bindings.connect_clicked append_prev_button (fun () -> hide_search ui; append_reference ui "previous");
+  Gtk_bindings.connect_clicked prev_button (fun () -> hide_search ui; navigate ui "previous");
+  Gtk_bindings.connect_clicked next_button (fun () -> hide_search ui; navigate ui "next");
+  Gtk_bindings.connect_clicked append_next_button (fun () -> hide_search ui; append_reference ui "next");
   Gtk_bindings.connect_clicked zoom_out_button (fun () -> zoom ui (-1));
   Gtk_bindings.connect_clicked zoom_in_button (fun () -> zoom ui 1);
-  Gtk_bindings.connect_clicked goto_button (fun () -> goto_source ui);
-  Gtk_bindings.connect_clicked lucky_button (fun () -> randomize_source ui);
-  Gtk_bindings.connect_clicked back_button (fun () -> go_back ui);
-  Gtk_bindings.connect_activate reference_entry (fun () -> show_reference ui (Gtk_bindings.entry_get_text reference_entry));
+  Gtk_bindings.connect_clicked goto_button (fun () -> hide_search ui; goto_source ui);
+  Gtk_bindings.connect_clicked lucky_button (fun () -> hide_search ui; randomize_source ui);
+  Gtk_bindings.connect_clicked back_button (fun () -> hide_search ui; go_back ui);
+  Gtk_bindings.connect_activate reference_entry (fun () ->
+      hide_search ui;
+      show_reference ui (Gtk_bindings.entry_get_text reference_entry));
+  Gtk_bindings.connect_ctrl_f window (fun () -> open_search ui);
   Gtk_bindings.connect_activate_link output_label (fun uri ->
+      hide_search ui;
       if String.length uri >= 4 && String.sub uri 0 4 = "ref:" then
         show_reference ui (String.sub uri 4 (String.length uri - 4))
       else
@@ -668,25 +765,34 @@ let make_ui root names =
       if not ui.block then (
         match combo_value translation_combo with
         | Some translation ->
+            hide_search ui;
             ui.translation <- translation;
             load_source_catalog ui
         | None -> ()));
   Gtk_bindings.connect_changed source_combo.widget (fun () ->
       if not ui.block then (
+        hide_search ui;
         clear_levels_from ui 0;
         refresh_level_visibility ui;
         load_source_level ui 0));
   Gtk_bindings.connect_changed article_combo.widget (fun () ->
-      if not ui.block then show_article ui);
+      if not ui.block then (
+        hide_search ui;
+        show_article ui));
   Array.iteri
     (fun index level ->
       Gtk_bindings.connect_changed level.combo.widget (fun () ->
-          if not ui.block && index + 1 < Array.length ui.levels then load_source_level ui (index + 1));
+          if not ui.block && index + 1 < Array.length ui.levels then (
+            hide_search ui;
+            load_source_level ui (index + 1)));
       Gtk_bindings.connect_changed level.entry (fun () ->
-          if not ui.block && index + 1 < Array.length ui.levels then load_source_level ui (index + 1));
-      Gtk_bindings.connect_activate level.entry (fun () -> goto_source ui))
+          if not ui.block && index + 1 < Array.length ui.levels then (
+            hide_search ui;
+            load_source_level ui (index + 1)));
+      Gtk_bindings.connect_activate level.entry (fun () -> hide_search ui; goto_source ui))
     levels;
   Gtk_bindings.widget_show_all window;
+  Gtk_bindings.widget_hide search_row;
   let button_height = Gtk_bindings.widget_get_allocated_height zoom_out_button in
   if button_height > 0 then Gtk_bindings.image_set_from_file_scaled logo_image logo_path ~height:(max 1 (button_height / 10));
   load_translations ui;

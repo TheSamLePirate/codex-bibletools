@@ -402,6 +402,15 @@ let () =
   in
   assert_contains ~needle:"Texte &lt;dangereux&gt; &amp; sûr" plain_markup_escapes
     "Le rendu texte brut doit échapper les caractères réservés Pango.";
+  let search_markup =
+    Article_markdown.highlight_search_markup ~needle:"jean" ~current:1
+      "<a href=\"ref:Jn 1,1\">Jean</a> puis jean encore"
+  in
+  assert_true (search_markup.count = 2) "La recherche doit compter les occurrences textuelles visibles.";
+  assert_contains ~needle:"<a href=\"ref:Jn 1,1\"><span background=\"yellow\">Jean</span></a>" search_markup.markup
+    "La recherche doit pouvoir surligner une occurrence à l'intérieur du texte visible d'un lien.";
+  assert_contains ~needle:"<span background=\"yellow\" weight=\"bold\">jean</span>" search_markup.markup
+    "La recherche doit mettre en évidence l'occurrence courante.";
   let source_markup =
     Article_markdown.render_source_to_pango_markup
       "L’action liturgique (cf. Jn 4, 23) selon GS 22 et CEC, n. 10 ; voir aussi can. 15."

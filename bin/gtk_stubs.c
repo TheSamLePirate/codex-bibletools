@@ -12,9 +12,11 @@ typedef void GtkWidget;
 typedef void GtkTextBuffer;
 typedef void GtkClipboard;
 typedef void GdkDisplay;
+typedef void GtkAdjustment;
 typedef void PangoFontDescription;
 typedef char gchar;
 typedef unsigned int guint;
+typedef unsigned int guint32;
 typedef unsigned long gulong;
 typedef int gboolean;
 typedef void *gpointer;
@@ -31,6 +33,7 @@ extern void gtk_window_set_title(gpointer window, const gchar *title);
 extern void gtk_window_set_default_size(gpointer window, int width, int height);
 extern void gtk_window_set_icon(gpointer window, gpointer icon);
 extern void gtk_widget_set_app_paintable(gpointer widget, gboolean app_paintable);
+extern gboolean gtk_widget_grab_focus(gpointer widget);
 extern int gtk_widget_get_allocated_width(gpointer widget);
 extern int gtk_widget_get_allocated_height(gpointer widget);
 extern void gtk_widget_set_size_request(gpointer widget, int width, int height);
@@ -64,6 +67,10 @@ extern int gtk_combo_box_get_active(gpointer combo);
 extern void gtk_combo_box_set_active(gpointer combo, int index);
 extern GtkWidget *gtk_scrolled_window_new(gpointer hadj, gpointer vadj);
 extern void gtk_scrolled_window_set_policy(gpointer sw, int hpolicy, int vpolicy);
+extern GtkAdjustment *gtk_scrolled_window_get_vadjustment(gpointer sw);
+extern double gtk_adjustment_get_upper(GtkAdjustment *adjustment);
+extern double gtk_adjustment_get_page_size(GtkAdjustment *adjustment);
+extern void gtk_adjustment_set_value(GtkAdjustment *adjustment, double value);
 extern GtkWidget *gtk_text_view_new(void);
 extern void gtk_text_view_set_wrap_mode(gpointer text_view, int mode);
 extern void gtk_text_view_set_editable(gpointer text_view, gboolean setting);
@@ -79,6 +86,7 @@ extern void pango_font_description_free(PangoFontDescription *desc);
 extern void g_free(gpointer mem);
 extern guint g_timeout_add(guint interval, GSourceFunc function, gpointer data);
 extern gboolean g_source_remove(guint tag);
+extern guint gdk_keyval_to_lower(guint keyval);
 extern gulong g_signal_connect_data(gpointer instance, const gchar *detailed_signal, GCallback c_handler, gpointer data, GClosureNotify destroy_data, int connect_flags);
 extern gpointer gdk_pixbuf_new_from_file(const gchar *filename, gpointer error);
 extern int gdk_pixbuf_get_width(gpointer pixbuf);
@@ -148,6 +156,15 @@ struct string_callback_data {
   value closure;
 };
 
+typedef struct _GdkEventKey {
+  int type;
+  gpointer window;
+  signed char send_event;
+  guint32 time;
+  guint state;
+  guint keyval;
+} GdkEventKey;
+
 struct background_data {
   gpointer widget;
   double angle;
@@ -188,6 +205,20 @@ static value connect_string_signal(value widget, const char *signal_name, value 
   caml_register_global_root(&data->closure);
   g_signal_connect_data(unwrap_ptr(widget), signal_name, (GCallback)activate_link_callback, data, destroy_string_callback_data, 0);
   CAMLreturn(Val_unit);
+}
+
+static gboolean ctrl_f_callback(gpointer widget, gpointer event, gpointer data)
+{
+  CAMLparam0();
+  CAMLlocal1(unit);
+  GdkEventKey *key = (GdkEventKey *)event;
+  (void)widget;
+  if ((key->state & 4u) != 0u && gdk_keyval_to_lower(key->keyval) == (guint)'f') {
+    unit = Val_unit;
+    caml_callback(((struct callback_data *)data)->closure, unit);
+    CAMLreturnT(gboolean, 1);
+  }
+  CAMLreturnT(gboolean, 0);
 }
 
 static char *sanitize_label_text(const char *text)
@@ -406,6 +437,13 @@ CAMLprim value caml_gtk_window_enable_cross_background(value widget, value path)
   gtk_widget_set_app_paintable(background->widget, 1);
   g_signal_connect_data(background->widget, "draw", (GCallback)background_draw_callback, background, destroy_background_data, 0);
   background->timer_id = g_timeout_add(16, background_tick, background);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_widget_grab_focus(value widget)
+{
+  CAMLparam1(widget);
+  gtk_widget_grab_focus(unwrap_ptr(widget));
   CAMLreturn(Val_unit);
 }
 
@@ -632,6 +670,22 @@ CAMLprim value caml_gtk_scrolled_window_set_policy_bc(value *argv, int argn)
   return caml_gtk_scrolled_window_set_policy(argv[0], argv[1], argv[2]);
 }
 
+CAMLprim value caml_gtk_scrolled_window_scroll_vertical_ratio(value widget, value ratio)
+{
+  CAMLparam2(widget, ratio);
+  GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(unwrap_ptr(widget));
+  if (adjustment != NULL) {
+    double upper = gtk_adjustment_get_upper(adjustment);
+    double page_size = gtk_adjustment_get_page_size(adjustment);
+    double max_value = upper - page_size;
+    double value = Double_val(ratio) * (max_value > 0.0 ? max_value : 0.0);
+    if (value < 0.0) value = 0.0;
+    if (value > max_value) value = max_value;
+    gtk_adjustment_set_value(adjustment, value);
+  }
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value caml_gtk_text_view_new(value unit)
 {
   CAMLparam1(unit);
@@ -742,4 +796,15 @@ CAMLprim value caml_gtk_connect_activate(value widget, value closure)
 CAMLprim value caml_gtk_connect_activate_link(value widget, value closure)
 {
   return connect_string_signal(widget, "activate-link", closure);
+}
+
+CAMLprim value caml_gtk_connect_ctrl_f(value widget, value closure)
+{
+  CAMLparam2(widget, closure);
+  struct callback_data *data = malloc(sizeof(struct callback_data));
+  if (data == NULL) caml_failwith("malloc");
+  data->closure = closure;
+  caml_register_global_root(&data->closure);
+  g_signal_connect_data(unwrap_ptr(widget), "key-press-event", (GCallback)ctrl_f_callback, data, destroy_callback_data, 0);
+  CAMLreturn(Val_unit);
 }

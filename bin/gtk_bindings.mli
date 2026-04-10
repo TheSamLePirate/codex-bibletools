@@ -10,6 +10,7 @@ val window_set_title : widget -> string -> unit
 val window_set_default_size : widget -> width:int -> height:int -> unit
 val window_set_icon_from_file : widget -> string -> unit
 val window_enable_cross_background : widget -> string -> unit
+val widget_grab_focus : widget -> unit
 
 val box_new : vertical:bool -> spacing:int -> widget
 val flow_box_new : unit -> widget
@@ -41,6 +42,7 @@ val combo_box_set_active : widget -> int -> unit
 
 val scrolled_window_new : unit -> widget
 val scrolled_window_set_policy : widget -> h:int -> v:int -> unit
+val scrolled_window_scroll_vertical_ratio : widget -> float -> unit
 
 val text_view_new : unit -> widget
 val text_view_set_wrap_mode : widget -> int -> unit
@@ -61,3 +63,4 @@ val connect_clicked : widget -> (unit -> unit) -> unit
 val connect_changed : widget -> (unit -> unit) -> unit
 val connect_activate : widget -> (unit -> unit) -> unit
 val connect_activate_link : widget -> (string -> unit) -> unit
+val connect_ctrl_f : widget -> (unit -> unit) -> unit

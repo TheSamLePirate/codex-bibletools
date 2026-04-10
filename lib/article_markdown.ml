@@ -274,3 +274,81 @@ let render_source_to_pango_markup ?(highlights = []) ?references text =
           |> String.concat "\n"
         in
         body_markup ^ "\n\n<span weight=\"bold\" size=\"large\">Notes</span>\n" ^ notes_markup
+
+type search_result = {
+  markup : string;
+  count : int;
+  current : int option;
+  current_offset : int option;
+  visible_length : int;
+}
+
+let find_substring_case_insensitive ~needle ~haystack ~start =
+  let needle_len = String.length needle in
+  let haystack_len = String.length haystack in
+  let rec loop index =
+    if index + needle_len > haystack_len then None
+    else if String.sub haystack index needle_len = needle then Some index
+    else loop (index + 1)
+  in
+  loop start
+
+let highlight_search_markup ~needle ~current markup =
+  let needle = sanitize_text needle |> String.trim in
+  if needle = "" then { markup; count = 0; current = None; current_offset = None; visible_length = 0 }
+  else
+    let lower_needle = String.lowercase_ascii needle in
+    let needle_len = String.length needle in
+    let buffer = Buffer.create (String.length markup + 64) in
+    let occurrence_count = ref 0 in
+    let current_offset = ref None in
+    let visible_length = ref 0 in
+    let segment_start = ref 0 in
+    let process_text_segment segment =
+      let lower_segment = String.lowercase_ascii segment in
+      let rec loop start =
+        match find_substring_case_insensitive ~needle:lower_needle ~haystack:lower_segment ~start with
+        | None ->
+            let rest_len = String.length segment - start in
+            Buffer.add_substring buffer segment start rest_len;
+            visible_length := !visible_length + rest_len
+        | Some index ->
+            let before_len = index - start in
+            let occurrence_index = !occurrence_count in
+            if before_len > 0 then Buffer.add_substring buffer segment start before_len;
+            visible_length := !visible_length + before_len;
+            if occurrence_index = current then current_offset := Some !visible_length;
+            if occurrence_index = current then
+              Buffer.add_string buffer
+                (Printf.sprintf "<span background=\"yellow\" weight=\"bold\">%s</span>"
+                   (String.sub segment index needle_len))
+            else
+              Buffer.add_string buffer
+                (Printf.sprintf "<span background=\"yellow\">%s</span>" (String.sub segment index needle_len));
+            visible_length := !visible_length + needle_len;
+            incr occurrence_count;
+            loop (index + needle_len)
+      in
+      loop 0
+    in
+    let rec loop index inside_tag =
+      if index >= String.length markup then (
+        if !segment_start < String.length markup then process_text_segment (String.sub markup !segment_start (String.length markup - !segment_start));
+        let current =
+          if !occurrence_count = 0 then None
+          else Some (min (max 0 current) (!occurrence_count - 1))
+        in
+        { markup = Buffer.contents buffer; count = !occurrence_count; current; current_offset = !current_offset; visible_length = !visible_length })
+      else if inside_tag then (
+        Buffer.add_char buffer markup.[index];
+        if markup.[index] = '>' then (
+          segment_start := index + 1;
+          loop (index + 1) false)
+        else loop (index + 1) true)
+      else if markup.[index] = '<' then (
+        if !segment_start < index then process_text_segment (String.sub markup !segment_start (index - !segment_start));
+        Buffer.add_char buffer '<';
+        loop (index + 1) true)
+      else loop (index + 1) false
+    in
+    loop 0 false
