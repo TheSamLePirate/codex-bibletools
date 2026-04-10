@@ -1,0 +1,15 @@
+opam-version: "2.0"
+synopsis: "Bible tools and Vatican text explorer in OCaml"
+description: "Local Dune project for Bible lookup, Vatican corpus search, and a Tk launcher."
+maintainer: ["maxime"]
+authors: ["maxime"]
+license: "MIT"
+depends: [
+  "ocaml"
+  "dune"
+  "cmdliner"
+  "yojson"
+]
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]

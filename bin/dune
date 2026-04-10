@@ -1,0 +1,20 @@
+(executable
+ (name pascatho)
+ (public_name pascatho)
+ (modules pascatho gtk_bindings gtk_ui)
+ (libraries pascatho cmdliner unix)
+ (foreign_stubs
+  (language c)
+  (names gtk_stubs))
+ (link_flags
+  (-cclib /usr/lib/x86_64-linux-gnu/libgtk-3.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libgdk-3.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libgobject-2.0.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libglib-2.0.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libgio-2.0.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libpangocairo-1.0.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libpango-1.0.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libharfbuzz.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libcairo.so.2)
+  (-cclib /lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0)
+  (-cclib /lib/x86_64-linux-gnu/libatk-1.0.so.0)))

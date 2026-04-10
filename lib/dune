@@ -1,0 +1,4 @@
+(library
+ (name pascatho)
+ (wrapped false)
+ (libraries cmdliner str unix yojson))
