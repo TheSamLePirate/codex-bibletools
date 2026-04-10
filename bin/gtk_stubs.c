@@ -5,6 +5,7 @@
 #include <caml/custom.h>
 #include <caml/fail.h>
 #include <stdlib.h>
+#include <math.h>
 
 typedef void GtkWidget;
 typedef void GtkTextBuffer;
@@ -14,8 +15,10 @@ typedef unsigned int guint;
 typedef unsigned long gulong;
 typedef int gboolean;
 typedef void *gpointer;
+typedef void cairo_t;
 typedef void (*GCallback)(void);
 typedef void (*GClosureNotify)(gpointer, gpointer);
+typedef gboolean (*GSourceFunc)(gpointer);
 
 extern void gtk_init(int *argc, char ***argv);
 extern void gtk_main(void);
@@ -23,6 +26,10 @@ extern void gtk_main_quit(void);
 extern GtkWidget *gtk_window_new(int window_type);
 extern void gtk_window_set_title(gpointer window, const gchar *title);
 extern void gtk_window_set_default_size(gpointer window, int width, int height);
+extern void gtk_widget_set_app_paintable(gpointer widget, gboolean app_paintable);
+extern int gtk_widget_get_allocated_width(gpointer widget);
+extern int gtk_widget_get_allocated_height(gpointer widget);
+extern void gtk_widget_queue_draw(gpointer widget);
 extern GtkWidget *gtk_box_new(int orientation, int spacing);
 extern GtkWidget *gtk_flow_box_new(void);
 extern void gtk_flow_box_set_selection_mode(gpointer box, int mode);
@@ -38,6 +45,8 @@ extern GtkWidget *gtk_entry_new(void);
 extern const gchar *gtk_entry_get_text(gpointer entry);
 extern void gtk_entry_set_text(gpointer entry, const gchar *text);
 extern GtkWidget *gtk_button_new_with_label(const gchar *label);
+extern GtkWidget *gtk_image_new_from_file(const gchar *filename);
+extern void gtk_image_set_from_pixbuf(gpointer image, gpointer pixbuf);
 extern GtkWidget *gtk_combo_box_text_new(void);
 extern void gtk_combo_box_text_remove_all(gpointer combo);
 extern void gtk_combo_box_text_append_text(gpointer combo, const gchar *text);
@@ -58,7 +67,22 @@ extern void gtk_widget_show_all(gpointer widget);
 extern PangoFontDescription *pango_font_description_from_string(const gchar *str);
 extern void pango_font_description_free(PangoFontDescription *desc);
 extern void g_free(gpointer mem);
+extern guint g_timeout_add(guint interval, GSourceFunc function, gpointer data);
+extern gboolean g_source_remove(guint tag);
 extern gulong g_signal_connect_data(gpointer instance, const gchar *detailed_signal, GCallback c_handler, gpointer data, GClosureNotify destroy_data, int connect_flags);
+extern gpointer gdk_pixbuf_new_from_file(const gchar *filename, gpointer error);
+extern int gdk_pixbuf_get_width(gpointer pixbuf);
+extern int gdk_pixbuf_get_height(gpointer pixbuf);
+extern void gdk_cairo_set_source_pixbuf(cairo_t *cr, gpointer pixbuf, double pixbuf_x, double pixbuf_y);
+extern gpointer gdk_pixbuf_new_from_file_at_scale(const gchar *filename, int width, int height, gboolean preserve_aspect_ratio, gpointer error);
+extern void g_object_unref(gpointer object);
+extern void cairo_set_source_rgb(cairo_t *cr, double red, double green, double blue);
+extern void cairo_paint(cairo_t *cr);
+extern void cairo_paint_with_alpha(cairo_t *cr, double alpha);
+extern void cairo_set_line_width(cairo_t *cr, double width);
+extern void cairo_move_to(cairo_t *cr, double x, double y);
+extern void cairo_line_to(cairo_t *cr, double x, double y);
+extern void cairo_stroke(cairo_t *cr);
 
 #define GTK_WINDOW_TOPLEVEL 0
 #define GTK_ORIENTATION_HORIZONTAL 0
@@ -114,6 +138,15 @@ struct string_callback_data {
   value closure;
 };
 
+struct background_data {
+  gpointer widget;
+  double angle;
+  guint timer_id;
+  gpointer bg_pixbuf;
+  int bg_width;
+  int bg_height;
+};
+
 static void destroy_string_callback_data(gpointer data, gpointer closure)
 {
   (void)closure;
@@ -141,6 +174,97 @@ static value connect_string_signal(value widget, const char *signal_name, value 
   caml_register_global_root(&data->closure);
   g_signal_connect_data(unwrap_ptr(widget), signal_name, (GCallback)activate_link_callback, data, destroy_string_callback_data, 0);
   CAMLreturn(Val_unit);
+}
+
+static void rotate_point(double x, double y, double z, double angle, double *out_x, double *out_y, double *out_z)
+{
+  double ay = angle;
+  double ax = angle * 0.6;
+  double cy = cos(ay);
+  double sy = sin(ay);
+  double cx = cos(ax);
+  double sx = sin(ax);
+  double x1 = x * cy + z * sy;
+  double z1 = -x * sy + z * cy;
+  double y2 = y * cx - z1 * sx;
+  double z2 = y * sx + z1 * cx;
+  *out_x = x1;
+  *out_y = y2;
+  *out_z = z2;
+}
+
+static void project_point(double x, double y, double z, int width, int height, double *out_x, double *out_y)
+{
+  double distance = 5.0;
+  double perspective = 1.0 / (distance - z);
+  double scale = ((width < height) ? width : height) * 0.23;
+  *out_x = width * 0.5 + x * perspective * scale;
+  *out_y = height * 0.5 + y * perspective * scale;
+}
+
+static void draw_box_edges(cairo_t *cr, double angle, int width, int height, double hx, double hy, double hz)
+{
+  static const int edges[12][2] = {
+    {0, 1}, {1, 2}, {2, 3}, {3, 0},
+    {4, 5}, {5, 6}, {6, 7}, {7, 4},
+    {0, 4}, {1, 5}, {2, 6}, {3, 7}
+  };
+  double vertices[8][3] = {
+    {-hx, -hy, -hz}, {hx, -hy, -hz}, {hx, hy, -hz}, {-hx, hy, -hz},
+    {-hx, -hy, hz}, {hx, -hy, hz}, {hx, hy, hz}, {-hx, hy, hz}
+  };
+  int i;
+  for (i = 0; i < 12; i++) {
+    double ax, ay, az, bx, by, bz;
+    double x1, y1, x2, y2;
+    rotate_point(vertices[edges[i][0]][0], vertices[edges[i][0]][1], vertices[edges[i][0]][2], angle, &ax, &ay, &az);
+    rotate_point(vertices[edges[i][1]][0], vertices[edges[i][1]][1], vertices[edges[i][1]][2], angle, &bx, &by, &bz);
+    project_point(ax, ay, az, width, height, &x1, &y1);
+    project_point(bx, by, bz, width, height, &x2, &y2);
+    cairo_move_to(cr, x1, y1);
+    cairo_line_to(cr, x2, y2);
+  }
+}
+
+static gboolean background_draw_callback(gpointer widget, cairo_t *cr, gpointer data)
+{
+  struct background_data *background = (struct background_data *)data;
+  int width = gtk_widget_get_allocated_width(widget);
+  int height = gtk_widget_get_allocated_height(widget);
+  if (background->bg_pixbuf != NULL) {
+    double wave = sin(background->angle * 0.22);
+    double travel = (width * 0.08);
+    double x = (width - background->bg_width) * 0.5 + wave * travel;
+    double y = (height - background->bg_height) * 0.5;
+    gdk_cairo_set_source_pixbuf(cr, background->bg_pixbuf, x, y);
+    cairo_paint(cr);
+  }
+  cairo_set_source_rgb(cr, 0.78, 0.89, 1.0);
+  cairo_paint_with_alpha(cr, 0.74);
+  cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+  cairo_set_line_width(cr, 1.4);
+  draw_box_edges(cr, background->angle, width, height, 1.55, 0.26, 0.26);
+  draw_box_edges(cr, background->angle, width, height, 0.26, 1.55, 0.26);
+  draw_box_edges(cr, background->angle, width, height, 0.26, 0.26, 1.55);
+  cairo_stroke(cr);
+  return 0;
+}
+
+static gboolean background_tick(gpointer data)
+{
+  struct background_data *background = (struct background_data *)data;
+  background->angle += 0.02;
+  gtk_widget_queue_draw(background->widget);
+  return 1;
+}
+
+static void destroy_background_data(gpointer data, gpointer closure)
+{
+  struct background_data *background = (struct background_data *)data;
+  (void)closure;
+  if (background->timer_id != 0) g_source_remove(background->timer_id);
+  if (background->bg_pixbuf != NULL) g_object_unref(background->bg_pixbuf);
+  free(background);
 }
 
 CAMLprim value caml_gtk_init(value unit)
@@ -190,6 +314,23 @@ CAMLprim value caml_gtk_window_set_default_size_bc(value *argv, int argn)
 {
   (void)argn;
   return caml_gtk_window_set_default_size(argv[0], argv[1], argv[2]);
+}
+
+CAMLprim value caml_gtk_window_enable_cross_background(value widget, value path)
+{
+  CAMLparam2(widget, path);
+  struct background_data *background = malloc(sizeof(struct background_data));
+  if (background == NULL) caml_failwith("malloc");
+  background->widget = unwrap_ptr(widget);
+  background->angle = 0.0;
+  background->timer_id = 0;
+  background->bg_pixbuf = gdk_pixbuf_new_from_file(String_val(path), NULL);
+  background->bg_width = background->bg_pixbuf == NULL ? 0 : gdk_pixbuf_get_width(background->bg_pixbuf);
+  background->bg_height = background->bg_pixbuf == NULL ? 0 : gdk_pixbuf_get_height(background->bg_pixbuf);
+  gtk_widget_set_app_paintable(background->widget, 1);
+  g_signal_connect_data(background->widget, "draw", (GCallback)background_draw_callback, background, destroy_background_data, 0);
+  background->timer_id = g_timeout_add(16, background_tick, background);
+  CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_gtk_box_new(value vertical, value spacing)
@@ -306,6 +447,29 @@ CAMLprim value caml_gtk_button_new(value text)
   CAMLreturn(wrap_ptr(gtk_button_new_with_label(String_val(text))));
 }
 
+CAMLprim value caml_gtk_image_new_from_file(value path)
+{
+  CAMLparam1(path);
+  CAMLreturn(wrap_ptr(gtk_image_new_from_file(String_val(path))));
+}
+
+CAMLprim value caml_gtk_image_set_from_file_scaled(value widget, value path, value height)
+{
+  CAMLparam3(widget, path, height);
+  gpointer pixbuf = gdk_pixbuf_new_from_file_at_scale(String_val(path), -1, Int_val(height), 1, NULL);
+  if (pixbuf != NULL) {
+    gtk_image_set_from_pixbuf(unwrap_ptr(widget), pixbuf);
+    g_object_unref(pixbuf);
+  }
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_image_set_from_file_scaled_bc(value *argv, int argn)
+{
+  (void)argn;
+  return caml_gtk_image_set_from_file_scaled(argv[0], argv[1], argv[2]);
+}
+
 CAMLprim value caml_gtk_combo_box_text_new(value unit)
 {
   CAMLparam1(unit);
@@ -413,6 +577,12 @@ CAMLprim value caml_gtk_widget_set_sensitive(value widget, value sensitive)
   CAMLparam2(widget, sensitive);
   gtk_widget_set_sensitive(unwrap_ptr(widget), Bool_val(sensitive));
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_widget_get_allocated_height(value widget)
+{
+  CAMLparam1(widget);
+  CAMLreturn(Val_int(gtk_widget_get_allocated_height(unwrap_ptr(widget))));
 }
 
 CAMLprim value caml_gtk_widget_show(value widget)

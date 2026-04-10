@@ -8,6 +8,7 @@ val main_quit : unit -> unit
 val window_new : unit -> widget
 val window_set_title : widget -> string -> unit
 val window_set_default_size : widget -> width:int -> height:int -> unit
+val window_enable_cross_background : widget -> string -> unit
 
 val box_new : vertical:bool -> spacing:int -> widget
 val flow_box_new : unit -> widget
@@ -27,6 +28,8 @@ val entry_get_text : widget -> string
 val entry_set_text : widget -> string -> unit
 
 val button_new : string -> widget
+val image_new_from_file : string -> widget
+val image_set_from_file_scaled : widget -> string -> height:int -> unit
 
 val combo_box_text_new : unit -> widget
 val combo_box_text_remove_all : widget -> unit
@@ -45,6 +48,7 @@ val text_view_get_buffer : widget -> text_buffer
 val text_buffer_set_text : text_buffer -> string -> unit
 
 val widget_set_sensitive : widget -> bool -> unit
+val widget_get_allocated_height : widget -> int
 val widget_show : widget -> unit
 val widget_hide : widget -> unit
 val widget_show_all : widget -> unit

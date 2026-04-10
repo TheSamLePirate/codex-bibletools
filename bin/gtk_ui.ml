@@ -18,6 +18,7 @@ type level_state = {
 type t = {
   backend : string;
   mutable block : bool;
+  mutable suppress_history : bool;
   mutable translation : string;
   mutable current_ref : string;
   mutable source : string;
@@ -25,6 +26,7 @@ type t = {
   mutable status : string;
   mutable text_size : int;
   mutable title_size : int;
+  mutable history : View_history.t;
   window : Gtk_bindings.widget;
   status_label : Gtk_bindings.widget;
   title_label : Gtk_bindings.widget;
@@ -35,6 +37,7 @@ type t = {
   levels : level_state array;
   article_combo : combo_state;
   reference_entry : Gtk_bindings.widget;
+  back_button : Gtk_bindings.widget;
   chapter_button : Gtk_bindings.widget;
   prev_button : Gtk_bindings.widget;
   next_button : Gtk_bindings.widget;
@@ -119,6 +122,21 @@ let resolve_internal_article_url ui url =
   | "" -> None
   | reference -> Some reference
 
+let update_back_button ui =
+  Gtk_bindings.widget_set_sensitive ui.back_button (View_history.can_go_back ui.history)
+
+let record_view ui view =
+  if not ui.suppress_history then ui.history <- View_history.visit ui.history view;
+  update_back_button ui
+
+let select_combo_value ui combo value =
+  match List.find_mapi (fun index (entry_value, _label) -> if String.equal entry_value value then Some index else None) combo.entries with
+  | Some index ->
+      ui.block <- true;
+      Gtk_bindings.combo_box_set_active combo.widget index;
+      ui.block <- false
+  | None -> ()
+
 let refresh_action_buttons ui =
   let status_text = run ui.backend [ "status-ref"; "--translation"; translation_of_ui ui; "--reference"; ui.current_ref ] in
   let has_previous = Option.value (parse_bool_field status_text "prev") ~default:false in
@@ -129,6 +147,7 @@ let refresh_action_buttons ui =
 
 let apply_rendered ui ~fallback_reference ~status_prefix (reference, title, body) =
   let resolved_reference = if reference = "" then fallback_reference else reference in
+  record_view ui (View_history.Reference resolved_reference);
   ui.current_ref <- resolved_reference;
   Gtk_bindings.entry_set_text ui.reference_entry resolved_reference;
   set_output ui ~title ~reference:resolved_reference ~body;
@@ -310,19 +329,37 @@ let show_reference ui reference =
   let raw = run ui.backend [ "show-ref"; "--translation"; translation_of_ui ui; "--reference"; reference ] in
   apply_rendered ui ~fallback_reference:reference ~status_prefix:"Affichage: " (parse_rendered raw)
 
+let render_article_by_name ui article =
+  select_combo_value ui ui.article_combo article;
+  let body = run ui.backend [ "article"; "--name"; article ] in
+  let markup = Article_markdown.render_to_pango_markup ~resolve_internal:(resolve_internal_article_url ui) body in
+  record_view ui (View_history.Article article);
+  Gtk_bindings.label_set_text ui.title_label article;
+  Gtk_bindings.label_set_text ui.ref_label "";
+  Gtk_bindings.label_set_markup ui.output_label markup;
+  set_status ui ("Article: " ^ article);
+  Gtk_bindings.widget_set_sensitive ui.chapter_button false;
+  Gtk_bindings.widget_set_sensitive ui.prev_button false;
+  Gtk_bindings.widget_set_sensitive ui.next_button false
+
 let show_article ui =
   match combo_value ui.article_combo with
   | None -> ()
-  | Some article ->
-      let body = run ui.backend [ "article"; "--name"; article ] in
-      let markup = Article_markdown.render_to_pango_markup ~resolve_internal:(resolve_internal_article_url ui) body in
-      Gtk_bindings.label_set_text ui.title_label article;
-      Gtk_bindings.label_set_text ui.ref_label "";
-      Gtk_bindings.label_set_markup ui.output_label markup;
-      set_status ui ("Article: " ^ article);
-      Gtk_bindings.widget_set_sensitive ui.chapter_button false;
-      Gtk_bindings.widget_set_sensitive ui.prev_button false;
-      Gtk_bindings.widget_set_sensitive ui.next_button false
+  | Some article -> render_article_by_name ui article
+
+let render_view ui = function
+  | View_history.Reference reference -> show_reference ui reference
+  | View_history.Article article -> render_article_by_name ui article
+
+let go_back ui =
+  match View_history.pop ui.history with
+  | None -> ()
+  | Some (view, history) ->
+      ui.history <- history;
+      ui.suppress_history <- true;
+      render_view ui view;
+      ui.suppress_history <- false;
+      update_back_button ui
 
 let goto_source ui =
   let source = source_of_ui ui in
@@ -353,11 +390,17 @@ let create_label text =
   Gtk_bindings.label_set_line_wrap label true;
   label
 
+let project_root_from_backend backend =
+  backend |> Filename.dirname |> Filename.dirname |> Filename.dirname |> Filename.dirname
+
 let make_ui backend =
   Gtk_bindings.init ();
+  let project_root = project_root_from_backend backend in
+  let background_path = Filename.concat project_root "bg.jpeg" in
   let window = Gtk_bindings.window_new () in
   Gtk_bindings.window_set_title window "Pascatho";
   Gtk_bindings.window_set_default_size window ~width:1200 ~height:850;
+  Gtk_bindings.window_enable_cross_background window background_path;
   let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:6 in
   let row1 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let row2 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
@@ -393,6 +436,9 @@ let make_ui backend =
   let zoom_out_button = Gtk_bindings.button_new "A-" in
   let zoom_in_button = Gtk_bindings.button_new "A+" in
   let goto_button = Gtk_bindings.button_new "Aller" in
+  let back_button = Gtk_bindings.button_new "Back" in
+  let logo_path = Filename.concat project_root "logo.jpeg" in
+  let logo_image = Gtk_bindings.image_new_from_file logo_path in
   Gtk_bindings.flow_box_set_selection_mode source_flow 0;
   Gtk_bindings.scrolled_window_set_policy scroll ~h:1 ~v:1;
   Gtk_bindings.container_add scroll output_label;
@@ -403,12 +449,12 @@ let make_ui backend =
   Gtk_bindings.box_pack_start row5 row5_right ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start root_box scroll ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start root_box row5 ~expand:false ~fill:false ~padding:0;
-  Gtk_bindings.box_pack_start root_box status_label ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.container_add window root_box;
   let ui =
     {
       backend;
       block = false;
+      suppress_history = false;
       translation = "bible_aelf";
       current_ref = "Jn 1,1";
       source = "";
@@ -416,6 +462,7 @@ let make_ui backend =
       status = "";
       text_size = 16;
       title_size = 22;
+      history = View_history.empty;
       window;
       status_label;
       title_label;
@@ -426,6 +473,7 @@ let make_ui backend =
       levels;
       article_combo;
       reference_entry;
+      back_button;
       chapter_button;
       prev_button;
       next_button;
@@ -455,9 +503,10 @@ let make_ui backend =
       Gtk_bindings.container_add source_flow combo_item)
     levels;
   Gtk_bindings.container_add source_flow goto_button;
+  pack_widget row5_left back_button;
   pack_label row5_left "Article";
   pack_widget row5_left article_combo.widget;
-  List.iter (pack_widget row5_right) [ zoom_out_button; zoom_in_button ];
+  List.iter (pack_widget row5_right) [ logo_image; zoom_out_button; zoom_in_button ];
   Gtk_bindings.entry_set_text reference_entry ui.current_ref;
   apply_font_sizes ui;
   Gtk_bindings.connect_destroy window Gtk_bindings.main_quit;
@@ -471,6 +520,7 @@ let make_ui backend =
   Gtk_bindings.connect_clicked zoom_out_button (fun () -> zoom ui (-1));
   Gtk_bindings.connect_clicked zoom_in_button (fun () -> zoom ui 1);
   Gtk_bindings.connect_clicked goto_button (fun () -> goto_source ui);
+  Gtk_bindings.connect_clicked back_button (fun () -> go_back ui);
   Gtk_bindings.connect_activate reference_entry (fun () -> show_reference ui (Gtk_bindings.entry_get_text reference_entry));
   Gtk_bindings.connect_activate_link output_label (fun uri ->
       if String.length uri >= 4 && String.sub uri 0 4 = "ref:" then
@@ -502,6 +552,8 @@ let make_ui backend =
       Gtk_bindings.connect_activate level.entry (fun () -> goto_source ui))
     levels;
   Gtk_bindings.widget_show_all window;
+  let button_height = Gtk_bindings.widget_get_allocated_height zoom_out_button in
+  if button_height > 0 then Gtk_bindings.image_set_from_file_scaled logo_image logo_path ~height:(max 1 (button_height / 10));
   load_translations ui;
   let raw_articles = run ui.backend [ "articles" ] in
   let article_entries = raw_articles |> parse_lines |> List.map (fun name -> (name, name)) in
@@ -509,6 +561,7 @@ let make_ui backend =
   load_source_catalog ui;
   show_reference ui ui.current_ref;
   refresh_action_buttons ui;
+  update_back_button ui;
   ui
 
 let launch backend =

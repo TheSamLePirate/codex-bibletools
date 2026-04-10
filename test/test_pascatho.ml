@@ -90,6 +90,21 @@ let article_reference_supported reference =
             [ "ahmad:"; "bukhari:"; "muslim:"; "abudawud:"; "tirmidhi:"; "nasai:"; "riyadussalihin:"; "mishkat:"; "ibnmajah:"; "adab:" ])))
 
 let () =
+  let history =
+    View_history.empty
+    |> fun history -> View_history.visit history (View_history.Reference "Jn 1,1")
+    |> fun history -> View_history.visit history (View_history.Article "inceste.md")
+  in
+  assert_true (View_history.can_go_back history) "L'historique doit permettre un retour après deux vues.";
+  let previous_view, history_after_back =
+    match View_history.pop history with
+    | Some value -> value
+    | None -> fail "Le retour arrière doit trouver une vue précédente."
+  in
+  assert_true
+    (match previous_view with View_history.Reference "Jn 1,1" -> true | _ -> false)
+    "Le retour arrière doit revenir à la référence précédente.";
+  assert_true (not (View_history.can_go_back history_after_back)) "Après un seul retour, la pile doit être vide.";
   let* root = Project_root.find () in
   let* names = Book_names.load ~root in
   let* parsed = Bible_reference.parse ~names "Jn 1,1" in

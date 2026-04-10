@@ -8,6 +8,7 @@ external main_quit : unit -> unit = "caml_gtk_main_quit"
 external window_new : unit -> widget = "caml_gtk_window_new"
 external window_set_title : widget -> string -> unit = "caml_gtk_window_set_title"
 external window_set_default_size : widget -> width:int -> height:int -> unit = "caml_gtk_window_set_default_size_bc" "caml_gtk_window_set_default_size"
+external window_enable_cross_background : widget -> string -> unit = "caml_gtk_window_enable_cross_background"
 
 external box_new : vertical:bool -> spacing:int -> widget = "caml_gtk_box_new_bc" "caml_gtk_box_new"
 external flow_box_new : unit -> widget = "caml_gtk_flow_box_new"
@@ -27,6 +28,8 @@ external entry_get_text : widget -> string = "caml_gtk_entry_get_text"
 external entry_set_text : widget -> string -> unit = "caml_gtk_entry_set_text"
 
 external button_new : string -> widget = "caml_gtk_button_new"
+external image_new_from_file : string -> widget = "caml_gtk_image_new_from_file"
+external image_set_from_file_scaled : widget -> string -> height:int -> unit = "caml_gtk_image_set_from_file_scaled_bc" "caml_gtk_image_set_from_file_scaled"
 
 external combo_box_text_new : unit -> widget = "caml_gtk_combo_box_text_new"
 external combo_box_text_remove_all : widget -> unit = "caml_gtk_combo_box_text_remove_all"
@@ -45,6 +48,7 @@ external text_view_get_buffer : widget -> text_buffer = "caml_gtk_text_view_get_
 external text_buffer_set_text : text_buffer -> string -> unit = "caml_gtk_text_buffer_set_text"
 
 external widget_set_sensitive : widget -> bool -> unit = "caml_gtk_widget_set_sensitive"
+external widget_get_allocated_height : widget -> int = "caml_gtk_widget_get_allocated_height"
 external widget_show : widget -> unit = "caml_gtk_widget_show"
 external widget_hide : widget -> unit = "caml_gtk_widget_hide"
 external widget_show_all : widget -> unit = "caml_gtk_widget_show_all"
