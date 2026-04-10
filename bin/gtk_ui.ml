@@ -80,11 +80,15 @@ let apply_font_sizes ui =
 let parse_lines text =
   text |> String.split_on_char '\n' |> List.filter (fun line -> line <> "")
 
+let compact_text max_chars text =
+  if String.length text <= max_chars then text
+  else String.sub text 0 (max_chars - 1) ^ "…"
+
 let fill_combo ui combo entries =
   ui.block <- true;
   combo.entries <- entries;
   Gtk_bindings.combo_box_text_remove_all combo.widget;
-  List.iter (fun (_value, label) -> Gtk_bindings.combo_box_text_append_text combo.widget label) entries;
+  List.iter (fun (_value, label) -> Gtk_bindings.combo_box_text_append_text combo.widget (compact_text 10 label)) entries;
   if entries = [] then Gtk_bindings.combo_box_set_active combo.widget (-1)
   else Gtk_bindings.combo_box_set_active combo.widget 0;
   ui.block <- false
@@ -97,10 +101,9 @@ let clear_combo ui combo =
   ui.block <- false
 
 let combo_value combo =
-  match Gtk_bindings.combo_box_text_get_active_text combo.widget with
-  | None -> None
-  | Some label ->
-      List.find_map (fun (value, text) -> if String.equal text label then Some value else None) combo.entries
+  match Gtk_bindings.combo_box_get_active combo.widget with
+  | index when index >= 0 && index < List.length combo.entries -> Some (fst (List.nth combo.entries index))
+  | _ -> None
 
 let plain_markup ui text =
   Article_markdown.render_plain_to_pango_markup ~highlights:ui.highlights text
@@ -220,7 +223,7 @@ let set_level_combo ui level label entries =
   let state = ui.levels.(level) in
   state.mode <- Combo;
   Gtk_bindings.label_set_text state.label label;
-  Gtk_bindings.widget_show state.label;
+  Gtk_bindings.widget_hide state.label;
   Gtk_bindings.widget_show state.combo.widget;
   Gtk_bindings.widget_hide state.entry;
   Gtk_bindings.widget_set_sensitive state.combo.widget true;
@@ -230,7 +233,7 @@ let set_level_integer ui level label count =
   let state = ui.levels.(level) in
   state.mode <- Integer_input count;
   Gtk_bindings.label_set_text state.label (Printf.sprintf "%s (1-%d)" label count);
-  Gtk_bindings.widget_show state.label;
+  Gtk_bindings.widget_hide state.label;
   Gtk_bindings.widget_hide state.combo.widget;
   clear_combo ui state.combo;
   Gtk_bindings.widget_show state.entry;
@@ -311,12 +314,12 @@ let refresh_level_visibility ui =
         match state.mode with
         | Hidden -> ()
         | Combo ->
-            Gtk_bindings.widget_show state.label;
+            Gtk_bindings.widget_hide state.label;
             Gtk_bindings.widget_show state.combo.widget;
             Gtk_bindings.widget_hide state.entry
         | Integer_input count ->
             Gtk_bindings.label_set_text state.label (Printf.sprintf "%s (1-%d)" (List.nth labels index) count);
-            Gtk_bindings.widget_show state.label;
+            Gtk_bindings.widget_hide state.label;
             Gtk_bindings.widget_hide state.combo.widget;
             Gtk_bindings.widget_show state.entry)
       else set_level_hidden ui index)
@@ -523,9 +526,10 @@ let make_ui backend =
   Gtk_bindings.window_set_title window "Pascatho";
   Gtk_bindings.window_set_default_size window ~width:1200 ~height:850;
   Gtk_bindings.window_enable_cross_background window background_path;
-  let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:6 in
+  let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:4 in
   let row1 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let row2 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
+  let source_row = Gtk_bindings.box_new ~vertical:false ~spacing:4 in
   let source_flow = Gtk_bindings.flow_box_new () in
   let row5 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let row5_left = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
@@ -559,7 +563,7 @@ let make_ui backend =
   let append_next_button = Gtk_bindings.button_new "+" in
   let zoom_out_button = Gtk_bindings.button_new "A-" in
   let zoom_in_button = Gtk_bindings.button_new "A+" in
-  let goto_button = Gtk_bindings.button_new "Aller" in
+  let goto_button = Gtk_bindings.button_new ">" in
   let back_button = Gtk_bindings.button_new "Back" in
   let logo_path = Filename.concat project_root "logo.jpeg" in
   let highlights = load_highlights project_root in
@@ -568,7 +572,9 @@ let make_ui backend =
   Gtk_bindings.scrolled_window_set_policy scroll ~h:1 ~v:1;
   Gtk_bindings.container_add scroll output_label;
   List.iter (Gtk_bindings.box_pack_start root_box ~expand:false ~fill:false ~padding:0)
-    [ row1; row2; source_flow; title_label; ref_label ];
+    [ row1; row2; source_row; title_label; ref_label ];
+  Gtk_bindings.box_pack_start source_row source_flow ~expand:true ~fill:true ~padding:0;
+  Gtk_bindings.box_pack_start source_row goto_button ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_left ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_spacer ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_right ~expand:false ~fill:false ~padding:0;
@@ -612,28 +618,27 @@ let make_ui backend =
   in
   let pack_label row text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
   let pack_widget row widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
-  let add_source_item label_text widget =
-    let item = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
-    Gtk_bindings.box_pack_start item (create_label label_text) ~expand:false ~fill:false ~padding:0;
-    Gtk_bindings.box_pack_start item widget ~expand:false ~fill:false ~padding:0;
-    Gtk_bindings.container_add source_flow item
-  in
+  let compact_width = 56 in
+  let compact_entry_width = 36 in
+  Gtk_bindings.widget_set_size_request source_combo.widget ~width:compact_width ~height:(-1);
+  Array.iter
+    (fun level ->
+      Gtk_bindings.widget_set_size_request level.combo.widget ~width:compact_width ~height:(-1);
+      Gtk_bindings.widget_set_size_request level.entry ~width:compact_entry_width ~height:(-1))
+    levels;
+  Gtk_bindings.widget_set_size_request goto_button ~width:22 ~height:(-1);
   pack_label row1 "Bible";
   pack_widget row1 translation_combo.widget;
   pack_label row1 "Référence";
   pack_widget row1 reference_entry;
   pack_widget row1 show_button;
   List.iter (pack_widget row2) [ chapter_button; append_prev_button; prev_button; next_button; append_next_button ];
-  add_source_item "Source" source_combo.widget;
+  Gtk_bindings.container_add source_flow source_combo.widget;
   Array.iter
     (fun level ->
-      let combo_item = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
-      Gtk_bindings.box_pack_start combo_item level.label ~expand:false ~fill:false ~padding:0;
-      Gtk_bindings.box_pack_start combo_item level.combo.widget ~expand:false ~fill:false ~padding:0;
-      Gtk_bindings.box_pack_start combo_item level.entry ~expand:false ~fill:false ~padding:0;
-      Gtk_bindings.container_add source_flow combo_item)
+      Gtk_bindings.container_add source_flow level.combo.widget;
+      Gtk_bindings.container_add source_flow level.entry)
     levels;
-  Gtk_bindings.container_add source_flow goto_button;
   pack_widget row5_left back_button;
   pack_label row5_left "Article";
   pack_widget row5_left article_combo.widget;

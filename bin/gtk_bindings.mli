@@ -34,7 +34,7 @@ val image_set_from_file_scaled : widget -> string -> height:int -> unit
 val combo_box_text_new : unit -> widget
 val combo_box_text_remove_all : widget -> unit
 val combo_box_text_append_text : widget -> string -> unit
-val combo_box_text_get_active_text : widget -> string option
+val combo_box_get_active : widget -> int
 val combo_box_set_active : widget -> int -> unit
 
 val scrolled_window_new : unit -> widget
@@ -48,6 +48,7 @@ val text_view_get_buffer : widget -> text_buffer
 val text_buffer_set_text : text_buffer -> string -> unit
 
 val widget_set_sensitive : widget -> bool -> unit
+val widget_set_size_request : widget -> width:int -> height:int -> unit
 val widget_get_allocated_height : widget -> int
 val widget_show : widget -> unit
 val widget_hide : widget -> unit

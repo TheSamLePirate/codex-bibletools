@@ -34,7 +34,7 @@ external image_set_from_file_scaled : widget -> string -> height:int -> unit = "
 external combo_box_text_new : unit -> widget = "caml_gtk_combo_box_text_new"
 external combo_box_text_remove_all : widget -> unit = "caml_gtk_combo_box_text_remove_all"
 external combo_box_text_append_text : widget -> string -> unit = "caml_gtk_combo_box_text_append_text"
-external combo_box_text_get_active_text : widget -> string option = "caml_gtk_combo_box_text_get_active_text"
+external combo_box_get_active : widget -> int = "caml_gtk_combo_box_get_active"
 external combo_box_set_active : widget -> int -> unit = "caml_gtk_combo_box_set_active"
 
 external scrolled_window_new : unit -> widget = "caml_gtk_scrolled_window_new"
@@ -48,6 +48,7 @@ external text_view_get_buffer : widget -> text_buffer = "caml_gtk_text_view_get_
 external text_buffer_set_text : text_buffer -> string -> unit = "caml_gtk_text_buffer_set_text"
 
 external widget_set_sensitive : widget -> bool -> unit = "caml_gtk_widget_set_sensitive"
+external widget_set_size_request : widget -> width:int -> height:int -> unit = "caml_gtk_widget_set_size_request_bc" "caml_gtk_widget_set_size_request"
 external widget_get_allocated_height : widget -> int = "caml_gtk_widget_get_allocated_height"
 external widget_show : widget -> unit = "caml_gtk_widget_show"
 external widget_hide : widget -> unit = "caml_gtk_widget_hide"

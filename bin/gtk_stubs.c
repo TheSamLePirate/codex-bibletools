@@ -5,6 +5,7 @@
 #include <caml/custom.h>
 #include <caml/fail.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 typedef void GtkWidget;
@@ -29,6 +30,7 @@ extern void gtk_window_set_default_size(gpointer window, int width, int height);
 extern void gtk_widget_set_app_paintable(gpointer widget, gboolean app_paintable);
 extern int gtk_widget_get_allocated_width(gpointer widget);
 extern int gtk_widget_get_allocated_height(gpointer widget);
+extern void gtk_widget_set_size_request(gpointer widget, int width, int height);
 extern void gtk_widget_queue_draw(gpointer widget);
 extern GtkWidget *gtk_box_new(int orientation, int spacing);
 extern GtkWidget *gtk_flow_box_new(void);
@@ -51,6 +53,7 @@ extern GtkWidget *gtk_combo_box_text_new(void);
 extern void gtk_combo_box_text_remove_all(gpointer combo);
 extern void gtk_combo_box_text_append_text(gpointer combo, const gchar *text);
 extern gchar *gtk_combo_box_text_get_active_text(gpointer combo);
+extern int gtk_combo_box_get_active(gpointer combo);
 extern void gtk_combo_box_set_active(gpointer combo, int index);
 extern GtkWidget *gtk_scrolled_window_new(gpointer hadj, gpointer vadj);
 extern void gtk_scrolled_window_set_policy(gpointer sw, int hpolicy, int vpolicy);
@@ -142,6 +145,10 @@ struct background_data {
   gpointer widget;
   double angle;
   guint timer_id;
+  char *bg_path;
+  gpointer bg_original_pixbuf;
+  int bg_original_width;
+  int bg_original_height;
   gpointer bg_pixbuf;
   int bg_width;
   int bg_height;
@@ -231,10 +238,23 @@ static gboolean background_draw_callback(gpointer widget, cairo_t *cr, gpointer 
   struct background_data *background = (struct background_data *)data;
   int width = gtk_widget_get_allocated_width(widget);
   int height = gtk_widget_get_allocated_height(widget);
+  if (background->bg_original_pixbuf != NULL && width > 0 && height > 0) {
+    double scale_x = ((double)width) / ((double)background->bg_original_width);
+    double scale_y = ((double)height) / ((double)background->bg_original_height);
+    double scale = scale_x > scale_y ? scale_x : scale_y;
+    int target_width = (int)ceil(background->bg_original_width * scale);
+    int target_height = (int)ceil(background->bg_original_height * scale);
+    if (background->bg_pixbuf == NULL || background->bg_width != target_width || background->bg_height != target_height) {
+      if (background->bg_pixbuf != NULL) g_object_unref(background->bg_pixbuf);
+      background->bg_pixbuf = gdk_pixbuf_new_from_file_at_scale(background->bg_path, target_width, target_height, 0, NULL);
+      background->bg_width = background->bg_pixbuf == NULL ? 0 : gdk_pixbuf_get_width(background->bg_pixbuf);
+      background->bg_height = background->bg_pixbuf == NULL ? 0 : gdk_pixbuf_get_height(background->bg_pixbuf);
+    }
+  }
   if (background->bg_pixbuf != NULL) {
-    double wave = sin(background->angle * 0.22);
-    double travel = (width * 0.08);
-    double x = (width - background->bg_width) * 0.5 + wave * travel;
+    double travel = background->bg_width > width ? (double)(background->bg_width - width) : 0.0;
+    double phase = (sin(background->angle * 0.10) + 1.0) * 0.5;
+    double x = -travel * phase;
     double y = (height - background->bg_height) * 0.5;
     gdk_cairo_set_source_pixbuf(cr, background->bg_pixbuf, x, y);
     cairo_paint(cr);
@@ -262,7 +282,9 @@ static void destroy_background_data(gpointer data, gpointer closure)
   struct background_data *background = (struct background_data *)data;
   (void)closure;
   if (background->timer_id != 0) g_source_remove(background->timer_id);
+  if (background->bg_original_pixbuf != NULL) g_object_unref(background->bg_original_pixbuf);
   if (background->bg_pixbuf != NULL) g_object_unref(background->bg_pixbuf);
+  if (background->bg_path != NULL) free(background->bg_path);
   free(background);
 }
 
@@ -323,9 +345,14 @@ CAMLprim value caml_gtk_window_enable_cross_background(value widget, value path)
   background->widget = unwrap_ptr(widget);
   background->angle = 0.0;
   background->timer_id = 0;
-  background->bg_pixbuf = gdk_pixbuf_new_from_file(String_val(path), NULL);
-  background->bg_width = background->bg_pixbuf == NULL ? 0 : gdk_pixbuf_get_width(background->bg_pixbuf);
-  background->bg_height = background->bg_pixbuf == NULL ? 0 : gdk_pixbuf_get_height(background->bg_pixbuf);
+  background->bg_path = strdup(String_val(path));
+  if (background->bg_path == NULL) caml_failwith("strdup");
+  background->bg_original_pixbuf = gdk_pixbuf_new_from_file(String_val(path), NULL);
+  background->bg_original_width = background->bg_original_pixbuf == NULL ? 0 : gdk_pixbuf_get_width(background->bg_original_pixbuf);
+  background->bg_original_height = background->bg_original_pixbuf == NULL ? 0 : gdk_pixbuf_get_height(background->bg_original_pixbuf);
+  background->bg_pixbuf = NULL;
+  background->bg_width = 0;
+  background->bg_height = 0;
   gtk_widget_set_app_paintable(background->widget, 1);
   g_signal_connect_data(background->widget, "draw", (GCallback)background_draw_callback, background, destroy_background_data, 0);
   background->timer_id = g_timeout_add(16, background_tick, background);
@@ -505,6 +532,12 @@ CAMLprim value caml_gtk_combo_box_text_get_active_text(value widget)
   CAMLreturn(result);
 }
 
+CAMLprim value caml_gtk_combo_box_get_active(value widget)
+{
+  CAMLparam1(widget);
+  CAMLreturn(Val_int(gtk_combo_box_get_active(unwrap_ptr(widget))));
+}
+
 CAMLprim value caml_gtk_combo_box_set_active(value widget, value index)
 {
   CAMLparam2(widget, index);
@@ -576,6 +609,19 @@ CAMLprim value caml_gtk_widget_set_sensitive(value widget, value sensitive)
   CAMLparam2(widget, sensitive);
   gtk_widget_set_sensitive(unwrap_ptr(widget), Bool_val(sensitive));
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_widget_set_size_request(value widget, value width, value height)
+{
+  CAMLparam3(widget, width, height);
+  gtk_widget_set_size_request(unwrap_ptr(widget), Int_val(width), Int_val(height));
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_widget_set_size_request_bc(value *argv, int argn)
+{
+  (void)argn;
+  return caml_gtk_widget_set_size_request(argv[0], argv[1], argv[2]);
 }
 
 CAMLprim value caml_gtk_widget_get_allocated_height(value widget)
