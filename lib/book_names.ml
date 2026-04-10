@@ -1,5 +1,3 @@
-let ( let* ) result f = match result with Ok value -> f value | Error _ as e -> e
-
 type t = {
   alias_to_title : (string, string) Hashtbl.t;
   title_to_aliases : (string, string list) Hashtbl.t;
@@ -78,45 +76,26 @@ let add_alias alias title alias_to_title title_to_aliases =
   if not (List.exists (String.equal alias) existing) then
     Hashtbl.replace title_to_aliases title_key (alias :: existing)
 
-let parse_abrevs_section content =
-  let start_marker = "let abrevs = {" in
-  let end_marker = "let abrevsInverse" in
-  let start_idx =
-    try Some (Str.search_forward (Str.regexp_string start_marker) content 0)
-    with Not_found -> None
+let load ~root:_ =
+  let alias_to_title = Hashtbl.create 256 in
+  let title_to_aliases = Hashtbl.create 128 in
+  let ordered_aliases =
+    BibleTools.abbreviations
+    |> List.fold_left
+         (fun ordered (alias, title) ->
+           add_alias alias title alias_to_title title_to_aliases;
+           add_alias title title alias_to_title title_to_aliases;
+           alias :: title :: ordered)
+         []
+    |> List.rev
   in
-  match start_idx with
-  | None -> Error "Section `abrevs` introuvable dans bibleTools.js."
-  | Some idx ->
-      let body_start = idx + String.length start_marker in
-      let body_end =
-        try Str.search_forward (Str.regexp_string end_marker) content body_start
-        with Not_found -> String.length content
-      in
-      Ok (String.sub content body_start (body_end - body_start))
-
-let load ~root =
-  let path = Filename.concat root "bibleTools.js" in
-  try
-    let content = Stdlib.In_channel.with_open_bin path Stdlib.In_channel.input_all in
-    let* section = parse_abrevs_section content in
-    let alias_to_title = Hashtbl.create 256 in
-    let title_to_aliases = Hashtbl.create 128 in
-    let pair_re = Str.regexp "\"\\([^\"]+\\)\":\"\\([^\"]+\\)\"" in
-    let rec collect pos ordered =
-      match Str.search_forward pair_re section pos with
-      | exception Not_found -> List.rev ordered
-      | match_start ->
-          let alias = Str.matched_group 1 section in
-          let title = Str.matched_group 2 section in
-          let next_pos = match_start + String.length (Str.matched_string section) in
-          add_alias alias title alias_to_title title_to_aliases;
-          add_alias title title alias_to_title title_to_aliases;
-          collect next_pos (alias :: title :: ordered)
-    in
-    let ordered_aliases = collect 0 [] in
-    Ok { alias_to_title; title_to_aliases; ordered_aliases }
-  with Sys_error message -> Error message
+  List.iter
+    (fun (alias, canonical_alias) ->
+      match List.assoc_opt canonical_alias BibleTools.abbreviations with
+      | Some title -> add_alias alias title alias_to_title title_to_aliases
+      | None -> ())
+    BibleTools.inverse_aliases;
+  Ok { alias_to_title; title_to_aliases; ordered_aliases }
 
 let canonical_title t candidate =
   Hashtbl.find_opt t.alias_to_title (normalize candidate)

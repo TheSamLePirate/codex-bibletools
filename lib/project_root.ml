@@ -1,7 +1,8 @@
 let env_var = "PASCATHO_ROOT"
 
 let is_project_root path =
-  Sys.file_exists (Filename.concat path "dune-project") || Sys.file_exists (Filename.concat path "bibleTools.js")
+  Sys.file_exists (Filename.concat path "dune-project")
+  || (Sys.file_exists (Filename.concat path "datas") && Sys.file_exists (Filename.concat path "articles"))
 
 let rec search path =
   if is_project_root path then Ok path

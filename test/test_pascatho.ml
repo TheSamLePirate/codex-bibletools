@@ -110,6 +110,14 @@ let () =
     (match previous_view with View_history.Reference "Jn 1,1" -> true | _ -> false)
     "Le retour arrière doit revenir à la référence précédente.";
   assert_true (not (View_history.can_go_back history_after_back)) "Après un seul retour, la pile doit être vide.";
+  assert_true (BibleTools.rm2num "XIV" = 14) "La conversion des chiffres romains doit être disponible côté OCaml.";
+  assert_true
+    (String.equal (BibleTools.handle_romans "^Livre \\([IVX]+\\)$" "Livre XIV") "Livre 14")
+    "Le helper de conversion des chiffres romains doit remplacer les groupes capturés.";
+  let* names_without_js = Book_names.load ~root:"/tmp/does-not-need-bibletools-js" in
+  assert_true
+    (Book_names.canonical_title names_without_js "Jn" = Some "Jean")
+    "Les noms bibliques ne doivent plus dépendre du fichier bibleTools.js.";
   let* root = Project_root.find () in
   let* names = Book_names.load ~root in
   let* parsed = Bible_reference.parse ~names "Jn 1,1" in
