@@ -184,6 +184,38 @@ static value connect_string_signal(value widget, const char *signal_name, value 
   CAMLreturn(Val_unit);
 }
 
+static char *sanitize_label_text(const char *text)
+{
+  size_t len = strlen(text);
+  char *out = malloc(len + 1);
+  size_t i = 0;
+  size_t j = 0;
+  if (out == NULL) caml_failwith("malloc");
+  while (i < len) {
+    unsigned char c = (unsigned char)text[i];
+    if (c < 32) {
+      if (c == '\n' || c == '\r' || c == '\t') out[j++] = (char)c;
+      i++;
+    } else if (i + 1 < len && c == 0xC2 && (unsigned char)text[i + 1] == 0xA0) {
+      out[j++] = ' ';
+      i += 2;
+    } else if (i + 1 < len && c == 0xC2 && (unsigned char)text[i + 1] == 0xAD) {
+      i += 2;
+    } else if (i + 2 < len && c == 0xE2 && (unsigned char)text[i + 1] == 0x80 &&
+               (((unsigned char)text[i + 2] == 0x8B) || ((unsigned char)text[i + 2] == 0xA8) || ((unsigned char)text[i + 2] == 0xA9))) {
+      i += 3;
+    } else if (i + 2 < len && c == 0xE2 && (unsigned char)text[i + 1] == 0x81 && (unsigned char)text[i + 2] == 0xA0) {
+      i += 3;
+    } else if (i + 2 < len && c == 0xEF && (unsigned char)text[i + 1] == 0xBB && (unsigned char)text[i + 2] == 0xBF) {
+      i += 3;
+    } else {
+      out[j++] = text[i++];
+    }
+  }
+  out[j] = '\0';
+  return out;
+}
+
 static void rotate_point(double x, double y, double z, double angle, double *out_x, double *out_y, double *out_z)
 {
   double ay = angle;
@@ -425,14 +457,18 @@ CAMLprim value caml_gtk_label_new(value text)
 CAMLprim value caml_gtk_label_set_text(value widget, value text)
 {
   CAMLparam2(widget, text);
-  gtk_label_set_text(unwrap_ptr(widget), String_val(text));
+  char *sanitized = sanitize_label_text(String_val(text));
+  gtk_label_set_text(unwrap_ptr(widget), sanitized);
+  free(sanitized);
   CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_gtk_label_set_markup(value widget, value text)
 {
   CAMLparam2(widget, text);
-  gtk_label_set_markup(unwrap_ptr(widget), String_val(text));
+  char *sanitized = sanitize_label_text(String_val(text));
+  gtk_label_set_markup(unwrap_ptr(widget), sanitized);
+  free(sanitized);
   CAMLreturn(Val_unit);
 }
 

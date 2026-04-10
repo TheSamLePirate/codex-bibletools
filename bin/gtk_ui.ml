@@ -24,6 +24,7 @@ type t = {
   mutable current_ref : string;
   mutable current_title : string;
   mutable current_body : string;
+  mutable current_references : string option;
   mutable displayed_refs : string list;
   mutable source : string;
   mutable source_labels : (string, string list) Hashtbl.t;
@@ -43,6 +44,7 @@ type t = {
   article_combo : combo_state;
   reference_entry : Gtk_bindings.widget;
   back_button : Gtk_bindings.widget;
+  lucky_button : Gtk_bindings.widget;
   chapter_button : Gtk_bindings.widget;
   append_prev_button : Gtk_bindings.widget;
   prev_button : Gtk_bindings.widget;
@@ -54,8 +56,10 @@ let set_status ui text =
   ui.status <- text;
   Gtk_bindings.label_set_text ui.status_label text
 
-let escape_markup text =
-  text |> String.split_on_char '&' |> String.concat "&amp;" |> String.split_on_char '<' |> String.concat "&lt;" |> String.split_on_char '>' |> String.concat "&gt;"
+let random_choice list =
+  match list with
+  | [] -> None
+  | _ -> Some (List.nth list (Random.int (List.length list)))
 
 let apply_font_sizes ui =
   Gtk_bindings.widget_override_font ui.title_label (Printf.sprintf "Sans Bold %d" ui.title_size);
@@ -88,8 +92,8 @@ let combo_value combo =
   | index when index >= 0 && index < List.length combo.entries -> Some (fst (List.nth combo.entries index))
   | _ -> None
 
-let plain_markup ui text =
-  Article_markdown.render_plain_to_pango_markup ~highlights:ui.highlights text
+let plain_markup ui text references =
+  Article_markdown.render_source_to_pango_markup ~highlights:ui.highlights ?references text
   |> String.split_on_char '\n' |> String.concat "&#10;"
 
 let reference_summary refs =
@@ -100,12 +104,13 @@ let reference_summary refs =
       let last = List.hd (List.rev rest) in
       Printf.sprintf "%s … %s" first last
 
-let set_output ui ~title ~reference ~body =
+let set_output ui ~title ~reference ~body ~references =
   ui.current_title <- title;
   ui.current_body <- body;
+  ui.current_references <- references;
   Gtk_bindings.label_set_text ui.title_label title;
   Gtk_bindings.label_set_text ui.ref_label reference;
-  Gtk_bindings.label_set_markup ui.output_label (plain_markup ui body)
+  Gtk_bindings.label_set_markup ui.output_label (plain_markup ui body references)
 
 let translation_of_ui ui = ui.translation
 
@@ -158,7 +163,7 @@ let apply_rendered ui ~fallback_reference ~status_prefix (rendered : Sources.ren
   ui.current_ref <- resolved_reference;
   ui.displayed_refs <- [ resolved_reference ];
   Gtk_bindings.entry_set_text ui.reference_entry resolved_reference;
-  set_output ui ~title:rendered.title ~reference:resolved_reference ~body:rendered.body;
+  set_output ui ~title:rendered.title ~reference:resolved_reference ~body:rendered.body ~references:rendered.references;
   set_status ui (status_prefix ^ resolved_reference);
   refresh_action_buttons ui
 
@@ -375,7 +380,7 @@ let append_reference ui direction =
           let combined_title = if ui.current_title <> "" then ui.current_title else title in
           ui.displayed_refs <- combined_refs;
           ui.current_ref <- resolved_reference;
-          set_output ui ~title:combined_title ~reference:(reference_summary combined_refs) ~body:combined_body;
+          set_output ui ~title:combined_title ~reference:(reference_summary combined_refs) ~body:combined_body ~references:None;
           sync_selectors_to_reference ui resolved_reference;
           set_status ui (Printf.sprintf "Ajout %s: %s" (if String.equal direction "previous" then "avant" else "après") resolved_reference);
           refresh_action_buttons ui)
@@ -430,6 +435,34 @@ let goto_source ui =
     | Ok reference -> show_reference ui reference
     | Error message -> set_status ui ("Référence impossible: " ^ message)
 
+let randomize_source ui =
+  let source = source_of_ui ui in
+  if source = "" then set_status ui "Aucune source sélectionnée."
+  else
+    let rec choose level =
+      if level >= Array.length ui.levels then true
+      else
+        let state = ui.levels.(level) in
+        match state.mode with
+        | Hidden -> true
+        | Combo -> (
+            match random_choice state.combo.entries with
+            | None -> false
+            | Some (value, _) ->
+                select_combo_value ui state.combo value;
+                if level + 1 < Array.length ui.levels then load_source_level ui (level + 1);
+                choose (level + 1))
+        | Integer_input count ->
+            if count <= 0 then false
+            else (
+              ui.block <- true;
+              Gtk_bindings.entry_set_text state.entry (string_of_int (1 + Random.int count));
+              ui.block <- false;
+              if level + 1 < Array.length ui.levels then load_source_level ui (level + 1);
+              choose (level + 1))
+    in
+    if choose 0 then goto_source ui else set_status ui ("Aucune sélection aléatoire disponible pour " ^ source)
+
 let navigate ui direction =
   let source_direction = if String.equal direction "previous" then Sources.Previous else Sources.Next in
   match
@@ -469,6 +502,7 @@ let load_highlights project_root =
 
 let make_ui root names =
   Gtk_bindings.init ();
+  Random.self_init ();
   let background_path = Filename.concat root "bg.jpeg" in
   let logo_path = Filename.concat root "logo.jpeg" in
   let window = Gtk_bindings.window_new () in
@@ -503,7 +537,7 @@ let make_ui root names =
   let reference_entry = Gtk_bindings.entry_new () in
   let output_label = Gtk_bindings.label_new "" in
   Gtk_bindings.label_set_line_wrap output_label true;
-  Gtk_bindings.label_set_selectable output_label true;
+  Gtk_bindings.label_set_selectable output_label false;
   let scroll = Gtk_bindings.scrolled_window_new () in
   let show_button = Gtk_bindings.button_new "Afficher" in
   let chapter_button = Gtk_bindings.button_new "Chapitre" in
@@ -514,6 +548,7 @@ let make_ui root names =
   let zoom_out_button = Gtk_bindings.button_new "A-" in
   let zoom_in_button = Gtk_bindings.button_new "A+" in
   let goto_button = Gtk_bindings.button_new ">" in
+  let lucky_button = Gtk_bindings.button_new "🍀" in
   let back_button = Gtk_bindings.button_new "Back" in
   let highlights = load_highlights root in
   let logo_image = Gtk_bindings.image_new_from_file logo_path in
@@ -524,6 +559,7 @@ let make_ui root names =
     [ row1; row2; source_row; title_label; ref_label ];
   Gtk_bindings.box_pack_start source_row source_flow ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start source_row goto_button ~expand:false ~fill:false ~padding:0;
+  Gtk_bindings.box_pack_start source_row lucky_button ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_left ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_spacer ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_right ~expand:false ~fill:false ~padding:0;
@@ -540,6 +576,7 @@ let make_ui root names =
       current_ref = "Jn 1,1";
       current_title = "";
       current_body = "";
+      current_references = None;
       displayed_refs = [];
       source = "";
       source_labels = Hashtbl.create 16;
@@ -559,6 +596,7 @@ let make_ui root names =
       article_combo;
       reference_entry;
       back_button;
+      lucky_button;
       chapter_button;
       append_prev_button;
       prev_button;
@@ -577,6 +615,7 @@ let make_ui root names =
       Gtk_bindings.widget_set_size_request level.entry ~width:compact_entry_width ~height:(-1))
     levels;
   Gtk_bindings.widget_set_size_request goto_button ~width:22 ~height:(-1);
+  Gtk_bindings.widget_set_size_request lucky_button ~width:28 ~height:(-1);
   pack_label row1 "Bible";
   pack_widget row1 translation_combo.widget;
   pack_label row1 "Référence";
@@ -608,6 +647,7 @@ let make_ui root names =
   Gtk_bindings.connect_clicked zoom_out_button (fun () -> zoom ui (-1));
   Gtk_bindings.connect_clicked zoom_in_button (fun () -> zoom ui 1);
   Gtk_bindings.connect_clicked goto_button (fun () -> goto_source ui);
+  Gtk_bindings.connect_clicked lucky_button (fun () -> randomize_source ui);
   Gtk_bindings.connect_clicked back_button (fun () -> go_back ui);
   Gtk_bindings.connect_activate reference_entry (fun () -> show_reference ui (Gtk_bindings.entry_get_text reference_entry));
   Gtk_bindings.connect_activate_link output_label (fun uri ->

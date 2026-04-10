@@ -19,6 +19,7 @@ type rendered = {
   title : string;
   subtitle : string option;
   body : string;
+  references : string option;
 }
 
 type navigation = {
@@ -35,6 +36,7 @@ type vatican_doc = {
   title : string;
   text : string list;
   has_intro : bool;
+  references : string option;
 }
 
 type parsed_ref =
@@ -171,6 +173,7 @@ let load_vatican_dossier ~root dossier =
              title = doc |> member "title" |> to_string_option |> Option.value ~default:"(sans titre)";
              text = doc |> member "text" |> to_list |> filter_string;
              has_intro = doc |> member "hasIntro" |> to_bool_option |> Option.value ~default:false;
+             references = doc |> member "references" |> to_string_option;
            })
     |> List.sort (fun (left : vatican_doc) (right : vatican_doc) -> String.compare left.title right.title)
   in
@@ -705,7 +708,7 @@ let render_simple ~root kind first last =
     if from_index = to_index then cfg.prefix ^ string_of_int from_index
     else Printf.sprintf "%s%d-%d" cfg.prefix from_index to_index
   in
-  Ok { source_id = kind; reference; title = cfg.title; subtitle = None; body }
+  Ok { source_id = kind; reference; title = cfg.title; subtitle = None; body; references = None }
 
 let render_hadith_item item =
   let narrator = item |> member "french_narator" |> to_string_option |> Option.value ~default:"" in
@@ -791,7 +794,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
         |> List.map (fun (verse : Bible_data.verse) -> Printf.sprintf "%d. %s" verse.number verse.text)
         |> String.concat "\n"
       in
-      Ok { source_id = "Bible"; reference = Bible_reference.format bible_ref; title; subtitle = Some bible_translation; body }
+      Ok { source_id = "Bible"; reference = Bible_reference.format bible_ref; title; subtitle = Some bible_translation; body; references = None }
   | Quran (sura, first, last) ->
       let* quran = load_quran ~root in
       let* sourate = find_nth (quran_sourates quran) (sura - 1) "Sourate introuvable." in
@@ -806,7 +809,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
         |> String.concat "\n"
       in
       let title = Printf.sprintf "%d %s" (sourate |> member "position" |> to_int) (sourate |> member "nom_sourate" |> to_string) in
-      Ok { source_id = "Coran"; reference; title; subtitle = Some (sourate |> member "nom_phonetique" |> to_string); body }
+      Ok { source_id = "Coran"; reference; title; subtitle = Some (sourate |> member "nom_phonetique" |> to_string); body; references = None }
   | Vatican (dossier, date, first, last) ->
       let* docs = load_vatican_dossier ~root dossier in
       let* doc =
@@ -822,7 +825,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
         |> List.filter (fun (index, _) -> index >= from_index && index <= to_index)
         |> List.map snd |> String.concat "\n\n"
       in
-      Ok { source_id = "Vatican"; reference; title = doc.title; subtitle = Some dossier; body }
+      Ok { source_id = "Vatican"; reference; title = doc.title; subtitle = Some dossier; body; references = doc.references }
   | Simple (kind, first, last) -> render_simple ~root kind first last
   | Rael (book_index, section_index, first_page, last_page) ->
       let* doc = load_rael ~root in
@@ -855,6 +858,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
           title = rael_book_title book;
           subtitle = Some (rael_section_title section);
           body;
+          references = None;
         }
   | Compendium (first, last) ->
       let* items = load_compendium ~root in
@@ -878,6 +882,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
           title = "Compendium du Catéchisme de l'Eglise catholique";
           subtitle = None;
           body;
+          references = None;
         }
   | CompendiumSocial (first, last) ->
       let* items = load_compendium_social ~root in
@@ -901,6 +906,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
           title = "Compendium de la doctrine sociale de l'Eglise";
           subtitle = None;
           body;
+          references = None;
         }
   | CatechismeX (section_index, chapter_index, first_page, last_page) ->
       let* doc = load_catechisme_x ~root in
@@ -929,6 +935,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
           title = section |> member "title" |> to_string;
           subtitle = Some (chapter |> member "title" |> to_string);
           body;
+          references = None;
         }
   | CatechismeTrente (part_index, chapter_index, para_index, first_sentence, last_sentence) ->
       let* doc = load_catechisme_trente ~root in
@@ -955,6 +962,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
           title = part |> member "title" |> to_string;
           subtitle = Some ((chapter |> member "title" |> to_string) ^ " / " ^ (para |> member "title" |> to_string));
           body;
+          references = None;
         }
   | HadithBook (author, book, first_number, last_number) ->
       let* items = load_hadith_file ~root author in
@@ -980,7 +988,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
         if from_number = to_number then Printf.sprintf "%s.%s.%d" author book from_number
         else Printf.sprintf "%s.%s.%d-%d" author book from_number to_number
       in
-      Ok { source_id = "Hadiths"; reference; title = author; subtitle = Some ("livre " ^ book); body }
+      Ok { source_id = "Hadiths"; reference; title = author; subtitle = Some ("livre " ^ book); body; references = None }
   | HadithNumber (author, number) ->
       let* items = load_hadith_file ~root author in
       let* item =
@@ -990,7 +998,7 @@ let render_reference ~root ~names ~bible_translation ~reference =
       in
       let* book, _ = hadith_in_book item in
       let _, text = render_hadith_item item in
-      Ok { source_id = "Hadiths2"; reference; title = author ^ ":" ^ number; subtitle = Some ("livre " ^ book); body = text }
+      Ok { source_id = "Hadiths2"; reference; title = author ^ ":" ^ number; subtitle = Some ("livre " ^ book); body = text; references = None }
 
 let navigation ~root ~names ~bible_translation ~reference =
   let* parsed = parse_ref ~names reference in

@@ -15,6 +15,7 @@ type rendered = {
   title : string;
   subtitle : string option;
   body : string;
+  references : string option;
 }
 
 type navigation = {

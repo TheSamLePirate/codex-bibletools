@@ -6,6 +6,12 @@ let ( let* ) result f = match result with Ok value -> f value | Error message ->
 
 let assert_true condition message = if not condition then fail message
 
+let assert_contains ~needle haystack message =
+  try
+    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
+    ()
+  with Not_found -> fail message
+
 let rec read_all_lines channel acc =
   match input_line channel with
   | line -> read_all_lines channel (line :: acc)
@@ -60,6 +66,9 @@ let assert_source_roundtrip ~root ~names ~translation ~source =
   assert_true (String.equal rendered.reference reference) ("Round-trip cassé pour la source " ^ source ^ ".");
   assert_true (String.trim rendered.body <> "") ("Le rendu doit être non vide pour la source " ^ source ^ ".");
   Ok ()
+
+let resolve_article_url url =
+  if string_starts_with ~prefix:"https://pascatho.ovh/?" url then Sources.decode_site_reference_url url else None
 
 let list_article_urls root =
   let articles_dir = Filename.concat root "articles" in
@@ -318,6 +327,18 @@ let () =
   assert_true
     (Str.string_match (Str.regexp ".*<a href=\"ref:Gn 20,11-12\">Gn-20:11-12</a>.*") article_markup 0)
     "Les liens d'articles doivent devenir des liens internes quand la référence est connue.";
+  let* homosexualite_article = Article_store.read ~root ~name:"homosexualite.md" in
+  let homosexualite_markup =
+    Article_markdown.render_to_pango_markup ~resolve_internal:resolve_article_url homosexualite_article
+  in
+  assert_contains ~needle:"href=\"ref:Coran:26.165-174\"" homosexualite_markup
+    "Les références Coran présentes dans l'article homosexualite.md doivent rester des liens internes.";
+  assert_contains ~needle:"href=\"ref:Lv 20,13\"" homosexualite_markup
+    "Les références bibliques présentes dans l'article homosexualite.md doivent rester des liens internes.";
+  assert_contains ~needle:"href=\"ref:Cat.2357-2359\"" homosexualite_markup
+    "Les références du Catéchisme présentes dans l'article homosexualite.md doivent rester des liens internes.";
+  assert_contains ~needle:"href=\"ref:Vatican congregations 2021/2/22 11\"" homosexualite_markup
+    "Les références Vatican présentes dans l'article homosexualite.md doivent rester des liens internes.";
   let highlighted_markup =
     Article_markdown.render_to_pango_markup ~highlights:[ "[Ll]iberté"; "[Dd]ignité" ] ~resolve_internal:(fun _ -> None)
       "La liberté protège la dignité."
@@ -331,6 +352,34 @@ let () =
   assert_true
     (Str.string_match (Str.regexp ".*<span size=\"x-large\" weight=\"bold\"><b>Liberté</b></span>.*") heading_markup 0)
     "Le rendu markdown des titres ne doit pas lever d'exception Str.group_end.";
+  let subheading_markup =
+    Article_markdown.render_to_pango_markup ~resolve_internal:(fun _ -> None) "## Sous-titre"
+  in
+  assert_contains ~needle:"<span size=\"large\" weight=\"bold\">Sous-titre</span>" subheading_markup
+    "Le rendu markdown doit gérer les titres de niveau 2.";
+  let bullet_markup =
+    Article_markdown.render_to_pango_markup ~resolve_internal:(fun _ -> None) "* Premier point"
+  in
+  assert_contains ~needle:"• Premier point" bullet_markup
+    "Le rendu markdown doit gérer les listes simples.";
+  let external_link_markup =
+    Article_markdown.render_to_pango_markup ~resolve_internal:(fun _ -> None)
+      "[Site](https://example.com)"
+  in
+  assert_contains ~needle:"<a href=\"https://example.com\">Site</a>" external_link_markup
+    "Les liens markdown externes doivent rester externes quand aucune résolution interne n'est fournie.";
+  let escaped_markup =
+    Article_markdown.render_to_pango_markup ~resolve_internal:(fun _ -> None) "<b>&</b>"
+  in
+  assert_contains ~needle:"&lt;b&gt;&amp;&lt;/b&gt;" escaped_markup
+    "Le rendu markdown doit échapper le markup XML/Pango contenu dans les articles.";
+  let mixed_markdown_markup =
+    Article_markdown.render_to_pango_markup ~resolve_internal:(fun _ -> None)
+      "Avant **gras** puis [lien](https://example.com) après."
+  in
+  assert_contains ~needle:"Avant <b>gras</b> puis <a href=\"https://example.com\">lien</a> après."
+    mixed_markdown_markup
+    "Le rendu markdown doit gérer conjointement gras inline et liens.";
   let link_and_highlight_markup =
     Article_markdown.render_to_pango_markup ~highlights:[ "[Ff]emme" ]
       ~resolve_internal:(fun url -> if String.equal url "https://pascatho.ovh/?Gn-3%3A16" then Some "Gn 3,16" else None)
@@ -348,6 +397,64 @@ let () =
   assert_true
     (Str.string_match (Str.regexp ".*<b>Liberté</b>\n<b>Dignité</b>.*") plain_highlight_markup 0)
     "Les highlights doivent aussi s'appliquer aux textes de sources non markdown.";
+  let plain_markup_escapes =
+    Article_markdown.render_plain_to_pango_markup "Texte <dangereux> & sûr"
+  in
+  assert_contains ~needle:"Texte &lt;dangereux&gt; &amp; sûr" plain_markup_escapes
+    "Le rendu texte brut doit échapper les caractères réservés Pango.";
+  let source_markup =
+    Article_markdown.render_source_to_pango_markup
+      "L’action liturgique (cf. Jn 4, 23) selon GS 22 et CEC, n. 10 ; voir aussi can. 15."
+  in
+  assert_true
+    (Str.string_match (Str.regexp ".*href=\"ref:Jn 4,23\".*href=\"ref:Vatican concil_ii_vatican_council 1965/12/7-3 22\".*href=\"ref:Cat.10\".*href=\"ref:Can.15\".*") source_markup 0)
+    "Le rendu de source doit transformer les références bibliques, conciliaires, catéchétiques et canoniques en liens internes.";
+  let source_with_notes_markup =
+    Article_markdown.render_source_to_pango_markup ~references:"[1] Ac 17, 26.\n\n[2] CEC, n. 12."
+      "Dieu a fait habiter tout le genre humain [1] et l'Eglise enseigne [2]."
+  in
+  assert_true
+    ((try
+        ignore (Str.search_forward (Str.regexp_string "<span weight=\"bold\" size=\"large\">Notes</span>") source_with_notes_markup 0);
+        ignore (Str.search_forward (Str.regexp_string "href=\"ref:Ac 17,26\"") source_with_notes_markup 0);
+        ignore (Str.search_forward (Str.regexp_string "href=\"ref:Cat.12\"") source_with_notes_markup 0);
+        true
+      with Not_found -> false))
+    "Les notes Vatican doivent être affichées et leurs références internes résolues.";
+  let source_with_partial_notes_markup =
+    Article_markdown.render_source_to_pango_markup ~references:"[1] Ac 17, 26.\n\n[2] CEC, n. 12."
+      "Dieu a fait habiter tout le genre humain [1]."
+  in
+  assert_true
+    ((try
+        ignore (Str.search_forward (Str.regexp_string "href=\"ref:Ac 17,26\"") source_with_partial_notes_markup 0);
+        (try
+           ignore (Str.search_forward (Str.regexp_string "href=\"ref:Cat.12\"") source_with_partial_notes_markup 0);
+           false
+         with Not_found -> true)
+      with Not_found -> false))
+    "Seules les notes Vatican effectivement citées doivent être affichées.";
+  let sanitized_markup =
+    Article_markdown.render_source_to_pango_markup "ABC\194\160DEF\226\128\139GHI\001JKL"
+  in
+  assert_true
+    (String.equal sanitized_markup "ABC DEFGHIJKL")
+    "Le rendu source doit neutraliser les caractères problématiques sans casser le texte.";
+  let source_quran_markup =
+    Article_markdown.render_source_to_pango_markup "Voir aussi Sourate II, 255-257."
+  in
+  assert_contains ~needle:"href=\"ref:Coran:2.255-257\"" source_quran_markup
+    "Le rendu source doit reconnaître les références au Coran avec chiffres romains.";
+  let source_denzinger_markup =
+    Article_markdown.render_source_to_pango_markup "Cf. Denzinger 12-15."
+  in
+  assert_contains ~needle:"href=\"ref:DH.12-15\"" source_denzinger_markup
+    "Le rendu source doit reconnaître les références Denzinger.";
+  let* rendered_vatican =
+    Sources.render_reference ~root ~names ~bible_translation:"bible_aelf"
+      ~reference:"Vatican concil_ii_vatican_council 1965/10/28-2 1"
+  in
+  assert_true (Option.value rendered_vatican.references ~default:"" <> "") "Le rendu Vatican doit transporter les notes de bas de page.";
   let binary = Filename.concat root "_build/default/bin/pascatho.exe" in
   let translations_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "translations" ] in
   assert_true (translations_lines <> []) "Le binaire doit retrouver la racine du projet même hors du dépôt.";
