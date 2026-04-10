@@ -2,13 +2,8 @@
 [Ff]emmes?
 [Ee]sclav[a-z]*
 [Ff]rapp[a-z]*
-[Ss]erv[a-z]*
-[Dd]roits? de l'homme
-[Dd]ignité
-[Dd]roits?
-[Ll]ibertés?
-[EeÉé]galité
-[Ff]raternité
-[Rr]eligion
-[EeÉé]ducation
-[Pp]ropriété
+[Ss]erv[a-z*]
+[Ll]apid[a-z]*
+[Hh]omo[a-z]*
+[Cc]ombat[a-z]*
+[Tt]ue[a-z]*

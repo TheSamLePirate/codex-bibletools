@@ -10,6 +10,8 @@
 
 typedef void GtkWidget;
 typedef void GtkTextBuffer;
+typedef void GtkClipboard;
+typedef void GdkDisplay;
 typedef void PangoFontDescription;
 typedef char gchar;
 typedef unsigned int guint;
@@ -48,6 +50,10 @@ extern GtkWidget *gtk_entry_new(void);
 extern const gchar *gtk_entry_get_text(gpointer entry);
 extern void gtk_entry_set_text(gpointer entry, const gchar *text);
 extern GtkWidget *gtk_button_new_with_label(const gchar *label);
+extern GdkDisplay *gtk_widget_get_display(gpointer widget);
+extern GtkClipboard *gtk_clipboard_get_default(GdkDisplay *display);
+extern void gtk_clipboard_set_text(GtkClipboard *clipboard, const gchar *text, int len);
+extern void gtk_clipboard_store(GtkClipboard *clipboard);
 extern GtkWidget *gtk_image_new_from_file(const gchar *filename);
 extern void gtk_image_set_from_pixbuf(gpointer image, gpointer pixbuf);
 extern GtkWidget *gtk_combo_box_text_new(void);
@@ -519,6 +525,20 @@ CAMLprim value caml_gtk_button_new(value text)
 {
   CAMLparam1(text);
   CAMLreturn(wrap_ptr(gtk_button_new_with_label(String_val(text))));
+}
+
+CAMLprim value caml_gtk_widget_copy_text_to_clipboard(value widget, value text)
+{
+  CAMLparam2(widget, text);
+  GdkDisplay *display = gtk_widget_get_display(unwrap_ptr(widget));
+  if (display != NULL) {
+    GtkClipboard *clipboard = gtk_clipboard_get_default(display);
+    if (clipboard != NULL) {
+      gtk_clipboard_set_text(clipboard, String_val(text), -1);
+      gtk_clipboard_store(clipboard);
+    }
+  }
+  CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_gtk_image_new_from_file(value path)

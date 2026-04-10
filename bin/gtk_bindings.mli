@@ -29,6 +29,7 @@ val entry_get_text : widget -> string
 val entry_set_text : widget -> string -> unit
 
 val button_new : string -> widget
+val widget_copy_text_to_clipboard : widget -> string -> unit
 val image_new_from_file : string -> widget
 val image_set_from_file_scaled : widget -> string -> height:int -> unit
 

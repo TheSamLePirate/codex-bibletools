@@ -71,11 +71,11 @@ let compact_text max_chars text =
   if String.length text <= max_chars then text
   else String.sub text 0 (max_chars - 1) ^ "…"
 
-let fill_combo ui combo entries =
+let fill_combo ?(max_chars = 10) ui combo entries =
   ui.block <- true;
   combo.entries <- entries;
   Gtk_bindings.combo_box_text_remove_all combo.widget;
-  List.iter (fun (_value, label) -> Gtk_bindings.combo_box_text_append_text combo.widget (compact_text 10 label)) entries;
+  List.iter (fun (_value, label) -> Gtk_bindings.combo_box_text_append_text combo.widget (compact_text max_chars label)) entries;
   if entries = [] then Gtk_bindings.combo_box_set_active combo.widget (-1)
   else Gtk_bindings.combo_box_set_active combo.widget 0;
   ui.block <- false
@@ -540,6 +540,7 @@ let make_ui root names =
   Gtk_bindings.label_set_selectable output_label false;
   let scroll = Gtk_bindings.scrolled_window_new () in
   let show_button = Gtk_bindings.button_new "Afficher" in
+  let copy_button = Gtk_bindings.button_new "📋" in
   let chapter_button = Gtk_bindings.button_new "Chapitre" in
   let append_prev_button = Gtk_bindings.button_new "+" in
   let prev_button = Gtk_bindings.button_new "Précédent" in
@@ -560,7 +561,7 @@ let make_ui root names =
   Gtk_bindings.box_pack_start source_row source_flow ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start source_row goto_button ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start source_row lucky_button ~expand:false ~fill:false ~padding:0;
-  Gtk_bindings.box_pack_start row5 row5_left ~expand:false ~fill:false ~padding:0;
+  Gtk_bindings.box_pack_start row5 row5_left ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_spacer ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_right ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start root_box scroll ~expand:true ~fill:true ~padding:0;
@@ -608,12 +609,14 @@ let make_ui root names =
   let pack_widget row widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
   let compact_width = 56 in
   let compact_entry_width = 36 in
+  let article_width = 260 in
   Gtk_bindings.widget_set_size_request source_combo.widget ~width:compact_width ~height:(-1);
   Array.iter
     (fun level ->
       Gtk_bindings.widget_set_size_request level.combo.widget ~width:compact_width ~height:(-1);
       Gtk_bindings.widget_set_size_request level.entry ~width:compact_entry_width ~height:(-1))
     levels;
+  Gtk_bindings.widget_set_size_request article_combo.widget ~width:article_width ~height:(-1);
   Gtk_bindings.widget_set_size_request goto_button ~width:22 ~height:(-1);
   Gtk_bindings.widget_set_size_request lucky_button ~width:28 ~height:(-1);
   pack_label row1 "Bible";
@@ -621,6 +624,7 @@ let make_ui root names =
   pack_label row1 "Référence";
   pack_widget row1 reference_entry;
   pack_widget row1 show_button;
+  pack_widget row1 copy_button;
   List.iter (pack_widget row2) [ chapter_button; append_prev_button; prev_button; next_button; append_next_button ];
   Gtk_bindings.container_add source_flow source_combo.widget;
   Array.iter
@@ -630,12 +634,15 @@ let make_ui root names =
     levels;
   pack_widget row5_left back_button;
   pack_label row5_left "Article";
-  pack_widget row5_left article_combo.widget;
+  Gtk_bindings.box_pack_start row5_left article_combo.widget ~expand:true ~fill:true ~padding:0;
   List.iter (pack_widget row5_right) [ logo_image; zoom_out_button; zoom_in_button ];
   Gtk_bindings.entry_set_text reference_entry ui.current_ref;
   apply_font_sizes ui;
   Gtk_bindings.connect_destroy window Gtk_bindings.main_quit;
   Gtk_bindings.connect_clicked show_button (fun () -> show_reference ui (Gtk_bindings.entry_get_text reference_entry));
+  Gtk_bindings.connect_clicked copy_button (fun () ->
+      let reference = String.trim ui.current_ref in
+      if reference <> "" then Gtk_bindings.widget_copy_text_to_clipboard window reference);
   Gtk_bindings.connect_clicked chapter_button (fun () ->
       match chapter_target ui (Gtk_bindings.entry_get_text reference_entry |> String.trim) with
       | Some reference -> show_reference ui reference
@@ -684,7 +691,7 @@ let make_ui root names =
   if button_height > 0 then Gtk_bindings.image_set_from_file_scaled logo_image logo_path ~height:(max 1 (button_height / 10));
   load_translations ui;
   let article_entries = Article_store.list ~root |> List.map (fun (article : Article_store.article) -> (article.name, article.name)) in
-  fill_combo ui article_combo article_entries;
+  fill_combo ~max_chars:32 ui article_combo article_entries;
   load_source_catalog ui;
   show_reference ui ui.current_ref;
   refresh_action_buttons ui;

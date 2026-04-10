@@ -29,6 +29,7 @@ external entry_get_text : widget -> string = "caml_gtk_entry_get_text"
 external entry_set_text : widget -> string -> unit = "caml_gtk_entry_set_text"
 
 external button_new : string -> widget = "caml_gtk_button_new"
+external widget_copy_text_to_clipboard : widget -> string -> unit = "caml_gtk_widget_copy_text_to_clipboard"
 external image_new_from_file : string -> widget = "caml_gtk_image_new_from_file"
 external image_set_from_file_scaled : widget -> string -> height:int -> unit = "caml_gtk_image_set_from_file_scaled_bc" "caml_gtk_image_set_from_file_scaled"
 
