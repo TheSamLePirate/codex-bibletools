@@ -537,8 +537,7 @@ let main () =
     (match root () with
     | Ok root ->
         Unix.putenv Project_root.env_var root;
-        let backend = Filename.concat root "_build/default/bin/pascatho.exe" in
-        let _ = Gtk_ui.launch backend in
+        let _ = Gtk_ui.launch root in
         0
     | Error message ->
         prerr_endline message;

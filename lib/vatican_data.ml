@@ -15,8 +15,17 @@ type hit = {
   snippet : string;
 }
 
+let json_cache : (string, (Yojson.Safe.t, string) result) Hashtbl.t = Hashtbl.create 64
+
 let read_json_file path =
-  try Ok (Yojson.Safe.from_file path) with Yojson.Json_error message -> Error message | Sys_error message -> Error message
+  match Hashtbl.find_opt json_cache path with
+  | Some cached -> cached
+  | None ->
+      let loaded =
+        try Ok (Yojson.Safe.from_file path) with Yojson.Json_error message -> Error message | Sys_error message -> Error message
+      in
+      Hashtbl.replace json_cache path loaded;
+      loaded
 
 let sources ~root =
   let path = Filename.concat (Filename.concat root "datas") "Vatican_map.json" in

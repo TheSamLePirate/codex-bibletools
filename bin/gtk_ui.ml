@@ -16,7 +16,8 @@ type level_state = {
 }
 
 type t = {
-  backend : string;
+  root : string;
+  names : Book_names.t;
   mutable block : bool;
   mutable suppress_history : bool;
   mutable translation : string;
@@ -49,21 +50,6 @@ type t = {
   append_next_button : Gtk_bindings.widget;
 }
 
-let run backend args =
-  let command = Array.of_list (backend :: args) in
-  let input = Unix.open_process_args_in backend command in
-  Fun.protect
-    ~finally:(fun () -> ignore (Unix.close_process_in input))
-    (fun () ->
-      let buffer = Buffer.create 4096 in
-      (try
-         while true do
-           Buffer.add_string buffer (input_line input);
-           Buffer.add_char buffer '\n'
-         done
-       with End_of_file -> ());
-      Buffer.contents buffer)
-
 let set_status ui text =
   ui.status <- text;
   Gtk_bindings.label_set_text ui.status_label text
@@ -76,9 +62,6 @@ let apply_font_sizes ui =
   Gtk_bindings.widget_override_font ui.ref_label (Printf.sprintf "Sans %d" (max 12 (ui.text_size - 1)));
   Gtk_bindings.widget_override_font ui.status_label (Printf.sprintf "Sans %d" (max 11 (ui.text_size - 2)));
   Gtk_bindings.widget_override_font ui.output_label (Printf.sprintf "Sans %d" ui.text_size)
-
-let parse_lines text =
-  text |> String.split_on_char '\n' |> List.filter (fun line -> line <> "")
 
 let compact_text max_chars text =
   if String.length text <= max_chars then text
@@ -126,22 +109,16 @@ let set_output ui ~title ~reference ~body =
 
 let translation_of_ui ui = ui.translation
 
-let parse_bool_field text key =
-  parse_lines text
-  |> List.find_map (fun line ->
-         match String.split_on_char '=' line with
-         | [ field; value ] when String.equal field key -> Some (String.equal value "1")
-         | _ -> None)
-
 let chapter_target ui reference =
-  match run ui.backend [ "chapter-ref"; "--translation"; translation_of_ui ui; "--reference"; reference ] |> String.trim with
-  | "" -> None
-  | target -> Some target
+  match Sources.chapter_reference ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~reference with
+  | Ok target -> target
+  | Error message ->
+      set_status ui ("Chapitre indisponible: " ^ message);
+      None
 
 let resolve_internal_article_url ui url =
-  match run ui.backend [ "decode-site-ref"; "--url"; url ] |> String.trim with
-  | "" -> None
-  | reference -> Some reference
+  let _ = ui in
+  Sources.decode_site_reference_url url
 
 let update_back_button ui =
   Gtk_bindings.widget_set_sensitive ui.back_button (View_history.can_go_back ui.history)
@@ -161,38 +138,29 @@ let select_combo_value ui combo value =
 let refresh_action_buttons ui =
   let first_ref = match ui.displayed_refs with first :: _ -> first | [] -> ui.current_ref in
   let last_ref = match List.rev ui.displayed_refs with last :: _ -> last | [] -> ui.current_ref in
-  let first_status = run ui.backend [ "status-ref"; "--translation"; translation_of_ui ui; "--reference"; first_ref ] in
-  let last_status = run ui.backend [ "status-ref"; "--translation"; translation_of_ui ui; "--reference"; last_ref ] in
-  let has_previous = Option.value (parse_bool_field first_status "prev") ~default:false in
-  let has_next = Option.value (parse_bool_field last_status "next") ~default:false in
+  let first_status =
+    Sources.navigation ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~reference:first_ref
+  in
+  let last_status =
+    Sources.navigation ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~reference:last_ref
+  in
+  let has_previous = match first_status with Ok status -> status.has_previous | Error _ -> false in
+  let has_next = match last_status with Ok status -> status.has_next | Error _ -> false in
   Gtk_bindings.widget_set_sensitive ui.append_prev_button has_previous;
   Gtk_bindings.widget_set_sensitive ui.prev_button has_previous;
   Gtk_bindings.widget_set_sensitive ui.next_button has_next;
   Gtk_bindings.widget_set_sensitive ui.append_next_button has_next;
   Gtk_bindings.widget_set_sensitive ui.chapter_button (Option.is_some (chapter_target ui ui.current_ref))
 
-let apply_rendered ui ~fallback_reference ~status_prefix (reference, title, body) =
-  let resolved_reference = if reference = "" then fallback_reference else reference in
+let apply_rendered ui ~fallback_reference ~status_prefix (rendered : Sources.rendered) =
+  let resolved_reference = if rendered.reference = "" then fallback_reference else rendered.reference in
   record_view ui (View_history.Reference resolved_reference);
   ui.current_ref <- resolved_reference;
   ui.displayed_refs <- [ resolved_reference ];
   Gtk_bindings.entry_set_text ui.reference_entry resolved_reference;
-  set_output ui ~title ~reference:resolved_reference ~body;
+  set_output ui ~title:rendered.title ~reference:resolved_reference ~body:rendered.body;
   set_status ui (status_prefix ^ resolved_reference);
   refresh_action_buttons ui
-
-let parse_rendered text =
-  let lines = String.split_on_char '\n' text in
-  let ref, title, rest =
-    match lines with
-    | first :: second :: tail when String.starts_with ~prefix:"REF\t" first && String.starts_with ~prefix:"TEXT\t" second ->
-        ( String.sub first 4 (String.length first - 4),
-          String.sub second 5 (String.length second - 5),
-          tail )
-    | _ -> ("", "", lines)
-  in
-  let body = String.concat "\n" rest |> String.trim in
-  (ref, title, body)
 
 let source_of_ui ui =
   match combo_value ui.source_combo with Some source -> source | None -> ""
@@ -201,14 +169,13 @@ let count_for_path ui path =
   let source = source_of_ui ui in
   if source = "" then None
   else
-    let path_text = String.concat "\t" path in
-    let raw =
-      run ui.backend
-        ([ "source-count"; "--translation"; translation_of_ui ui; "--source"; source ]
-        @ if path = [] then [] else [ "--path"; path_text ])
-      |> String.trim
-    in
-    int_of_string_opt raw
+    match
+      Sources.selector_count ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~source ~path
+    with
+    | Ok count -> count
+    | Error message ->
+        set_status ui ("countArticles(" ^ source ^ ") erreur: " ^ message);
+        None
 
 let set_level_hidden ui level =
   let state = ui.levels.(level) in
@@ -280,30 +247,18 @@ let rec load_source_level ui level =
           set_status ui (Printf.sprintf "countArticles(%s, path='%s') -> %d" source path_text count)
       | _ ->
           set_status ui (Printf.sprintf "index(%s, path='%s')" source path_text);
-          let args =
-            [
-              "source-options";
-              "--translation";
-              translation_of_ui ui;
-              "--source";
-              source;
-            ]
-            @ if path = [] then [] else [ "--path"; path_text ]
-          in
-          let raw = run ui.backend args in
-          let entries =
-            raw |> parse_lines
-            |> List.map (fun line ->
-                   match String.split_on_char '\t' line with
-                   | value :: label_parts -> (value, String.concat "\t" label_parts)
-                   | [] -> ("", ""))
-          in
-          if entries = [] then clear_levels_from ui level
-          else (
-            clear_levels_from ui (level + 1);
-            set_level_combo ui level (List.nth labels level) entries;
-            set_status ui (Printf.sprintf "index(%s, path='%s') -> %d options" source path_text (List.length entries));
-            if level + 1 < List.length labels then load_source_level ui (level + 1))
+          (match
+             Sources.selector_options ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~source ~path
+           with
+          | Error message -> set_status ui ("index(" ^ source ^ ") erreur: " ^ message)
+          | Ok options ->
+              let entries = List.map (fun (option : Sources.selector_option) -> (option.value, option.label)) options in
+              if entries = [] then clear_levels_from ui level
+              else (
+                clear_levels_from ui (level + 1);
+                set_level_combo ui level (List.nth labels level) entries;
+                set_status ui (Printf.sprintf "index(%s, path='%s') -> %d options" source path_text (List.length entries));
+                if level + 1 < List.length labels then load_source_level ui (level + 1)))
 
 let refresh_level_visibility ui =
   let labels = Option.value (Hashtbl.find_opt ui.source_labels (source_of_ui ui)) ~default:[] in
@@ -326,15 +281,11 @@ let refresh_level_visibility ui =
     ui.levels
 
 let load_source_catalog ui =
-  let raw = run ui.backend [ "source-list"; "--translation"; translation_of_ui ui ] in
   let source_entries =
-    raw |> parse_lines
-    |> List.map (fun line ->
-           match String.split_on_char '\t' line with
-           | id :: _label :: nomenclature :: _ ->
-               Hashtbl.replace ui.source_labels id (if nomenclature = "" then [] else String.split_on_char '|' nomenclature);
-               (id, id)
-           | _ -> ("", ""))
+    Sources.list_sources ~root:ui.root
+    |> List.map (fun (source : Sources.source_descriptor) ->
+           Hashtbl.replace ui.source_labels source.id source.nomenclature;
+           (source.id, source.id))
   in
   fill_combo ui ui.source_combo source_entries;
   clear_levels_from ui 0;
@@ -342,24 +293,22 @@ let load_source_catalog ui =
   load_source_level ui 0
 
 let load_translations ui =
-  let raw = run ui.backend [ "translations" ] in
-  let entries =
-    raw |> parse_lines
-    |> List.map (fun line ->
-           match String.split_on_char '\t' line with
-           | id :: _title :: _ -> (id, id)
-           | _ -> ("", ""))
-  in
-  fill_combo ui ui.translation_combo entries
+  match Bible_data.available_translations ~root:ui.root with
+  | Error message -> set_status ui ("Traductions: " ^ message)
+  | Ok translations ->
+      let entries = List.map (fun (translation : Bible_data.translation_info) -> (translation.id, translation.id)) translations in
+      fill_combo ui ui.translation_combo entries
 
 let sync_selectors_to_reference ui reference =
-  match run ui.backend [ "selector-path"; "--translation"; translation_of_ui ui; "--reference"; reference ] |> parse_lines with
-  | source :: path_line :: _ ->
+  match
+    Sources.selector_path_of_reference ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui)
+      ~reference
+  with
+  | Ok (source, path) ->
       select_combo_value ui ui.source_combo source;
       clear_levels_from ui 0;
       refresh_level_visibility ui;
       load_source_level ui 0;
-      let path = if String.trim path_line = "" then [] else String.split_on_char '\t' path_line in
       List.iteri
         (fun index value ->
           if index < Array.length ui.levels then (
@@ -373,26 +322,26 @@ let sync_selectors_to_reference ui reference =
                 ui.block <- false);
             if index + 1 < Array.length ui.levels then load_source_level ui (index + 1)))
         path
-  | source :: _ ->
-      select_combo_value ui ui.source_combo source;
-      clear_levels_from ui 0;
-      refresh_level_visibility ui;
-      load_source_level ui 0
-  | [] -> ()
+  | Error _ -> ()
 
 let show_reference ui reference =
-  let raw = run ui.backend [ "show-ref"; "--translation"; translation_of_ui ui; "--reference"; reference ] in
-  let rendered = parse_rendered raw in
-  let resolved_reference, _, _ = rendered in
-  let resolved_reference = if resolved_reference = "" then reference else resolved_reference in
-  apply_rendered ui ~fallback_reference:reference ~status_prefix:"Affichage: " rendered;
-  sync_selectors_to_reference ui resolved_reference
+  match
+    Sources.render_reference ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~reference
+  with
+  | Error message -> set_status ui ("Affichage impossible: " ^ message)
+  | Ok rendered ->
+      let resolved_reference = if rendered.reference = "" then reference else rendered.reference in
+      apply_rendered ui ~fallback_reference:reference ~status_prefix:"Affichage: " rendered;
+      sync_selectors_to_reference ui resolved_reference
 
 let fetch_reference ui reference =
-  let raw = run ui.backend [ "show-ref"; "--translation"; translation_of_ui ui; "--reference"; reference ] in
-  let resolved_reference, title, body = parse_rendered raw in
-  let resolved_reference = if resolved_reference = "" then reference else resolved_reference in
-  (resolved_reference, title, body)
+  match
+    Sources.render_reference ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~reference
+  with
+  | Ok rendered ->
+      let resolved_reference = if rendered.reference = "" then reference else rendered.reference in
+      Ok (resolved_reference, rendered.title, rendered.body)
+  | Error message -> Error message
 
 let append_reference ui direction =
   let edge_ref =
@@ -403,48 +352,54 @@ let append_reference ui direction =
     | _, [] -> ui.current_ref
     | _, first :: _ -> first
   in
-  let next_raw =
-    run ui.backend
-      [ "navigate-ref"; "--translation"; translation_of_ui ui; "--reference"; edge_ref; "--direction"; direction ]
-  in
-  let next_reference, title, body = parse_rendered next_raw in
-  let next_reference = if next_reference = "" then edge_ref else next_reference in
-  let combined_refs =
-    match direction with
-    | "previous" -> next_reference :: ui.displayed_refs
-    | _ -> ui.displayed_refs @ [ next_reference ]
-  in
-  let combined_body =
-    match direction with
-    | "previous" -> body ^ "\n" ^ ui.current_body
-    | _ -> ui.current_body ^ "\n" ^ body
-  in
-  let combined_title = if ui.current_title <> "" then ui.current_title else title in
-  ui.displayed_refs <- combined_refs;
-  ui.current_ref <- next_reference;
-  set_output ui ~title:combined_title ~reference:(reference_summary combined_refs) ~body:combined_body;
-  sync_selectors_to_reference ui next_reference;
-  set_status ui (Printf.sprintf "Ajout %s: %s" (if String.equal direction "previous" then "avant" else "après") next_reference);
-  refresh_action_buttons ui
+  let source_direction = if String.equal direction "previous" then Sources.Previous else Sources.Next in
+  match
+    Sources.navigate ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~reference:edge_ref
+      source_direction
+  with
+  | Error message -> set_status ui ("Ajout impossible: " ^ message)
+  | Ok next_reference -> (
+      match fetch_reference ui next_reference with
+      | Error message -> set_status ui ("Ajout impossible: " ^ message)
+      | Ok (resolved_reference, title, body) ->
+          let combined_refs =
+            match direction with
+            | "previous" -> resolved_reference :: ui.displayed_refs
+            | _ -> ui.displayed_refs @ [ resolved_reference ]
+          in
+          let combined_body =
+            match direction with
+            | "previous" -> body ^ "\n" ^ ui.current_body
+            | _ -> ui.current_body ^ "\n" ^ body
+          in
+          let combined_title = if ui.current_title <> "" then ui.current_title else title in
+          ui.displayed_refs <- combined_refs;
+          ui.current_ref <- resolved_reference;
+          set_output ui ~title:combined_title ~reference:(reference_summary combined_refs) ~body:combined_body;
+          sync_selectors_to_reference ui resolved_reference;
+          set_status ui (Printf.sprintf "Ajout %s: %s" (if String.equal direction "previous" then "avant" else "après") resolved_reference);
+          refresh_action_buttons ui)
 
 let render_article_by_name ui article =
   select_combo_value ui ui.article_combo article;
-  let body = run ui.backend [ "article"; "--name"; article ] in
-  let markup =
-    Article_markdown.render_to_pango_markup ~highlights:ui.highlights
-      ~resolve_internal:(resolve_internal_article_url ui) body
-  in
-  record_view ui (View_history.Article article);
-  ui.displayed_refs <- [];
-  Gtk_bindings.label_set_text ui.title_label article;
-  Gtk_bindings.label_set_text ui.ref_label "";
-  Gtk_bindings.label_set_markup ui.output_label markup;
-  set_status ui ("Article: " ^ article);
-  Gtk_bindings.widget_set_sensitive ui.chapter_button false;
-  Gtk_bindings.widget_set_sensitive ui.append_prev_button false;
-  Gtk_bindings.widget_set_sensitive ui.prev_button false;
-  Gtk_bindings.widget_set_sensitive ui.next_button false;
-  Gtk_bindings.widget_set_sensitive ui.append_next_button false
+  match Article_store.read ~root:ui.root ~name:article with
+  | Error message -> set_status ui ("Article impossible: " ^ message)
+  | Ok body ->
+      let markup =
+        Article_markdown.render_to_pango_markup ~highlights:ui.highlights
+          ~resolve_internal:(resolve_internal_article_url ui) body
+      in
+      record_view ui (View_history.Article article);
+      ui.displayed_refs <- [];
+      Gtk_bindings.label_set_text ui.title_label article;
+      Gtk_bindings.label_set_text ui.ref_label "";
+      Gtk_bindings.label_set_markup ui.output_label markup;
+      set_status ui ("Article: " ^ article);
+      Gtk_bindings.widget_set_sensitive ui.chapter_button false;
+      Gtk_bindings.widget_set_sensitive ui.append_prev_button false;
+      Gtk_bindings.widget_set_sensitive ui.prev_button false;
+      Gtk_bindings.widget_set_sensitive ui.next_button false;
+      Gtk_bindings.widget_set_sensitive ui.append_next_button false
 
 let show_article ui =
   match combo_value ui.article_combo with
@@ -469,23 +424,20 @@ let goto_source ui =
   let source = source_of_ui ui in
   let path = current_path ui (Array.length ui.levels) in
   if source <> "" && path <> [] then
-    let reference =
-      run ui.backend
-        [ "compile-ref"; "--translation"; translation_of_ui ui; "--source"; source; "--path"; String.concat "\t" path ]
-      |> String.trim
-    in
-    show_reference ui reference
+    match
+      Sources.compile_reference ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~source ~path
+    with
+    | Ok reference -> show_reference ui reference
+    | Error message -> set_status ui ("Référence impossible: " ^ message)
 
 let navigate ui direction =
-  let raw =
-    run ui.backend
-      [ "navigate-ref"; "--translation"; translation_of_ui ui; "--reference"; ui.current_ref; "--direction"; direction ]
-  in
-  let rendered = parse_rendered raw in
-  let resolved_reference, _, _ = rendered in
-  let resolved_reference = if resolved_reference = "" then ui.current_ref else resolved_reference in
-  apply_rendered ui ~fallback_reference:ui.current_ref ~status_prefix:"Navigation: " rendered;
-  sync_selectors_to_reference ui resolved_reference
+  let source_direction = if String.equal direction "previous" then Sources.Previous else Sources.Next in
+  match
+    Sources.navigate ~root:ui.root ~names:ui.names ~bible_translation:(translation_of_ui ui) ~reference:ui.current_ref
+      source_direction
+  with
+  | Error message -> set_status ui ("Navigation impossible: " ^ message)
+  | Ok next_reference -> show_reference ui next_reference
 
 let zoom ui delta =
   ui.text_size <- max 10 (ui.text_size + delta);
@@ -497,9 +449,6 @@ let create_label text =
   let label = Gtk_bindings.label_new text in
   Gtk_bindings.label_set_line_wrap label true;
   label
-
-let project_root_from_backend backend =
-  backend |> Filename.dirname |> Filename.dirname |> Filename.dirname |> Filename.dirname
 
 let load_highlights project_root =
   let path = Filename.concat project_root "highlights" in
@@ -518,11 +467,10 @@ let load_highlights project_root =
         loop [])
   else []
 
-let make_ui backend =
+let make_ui root names =
   Gtk_bindings.init ();
-  let project_root = project_root_from_backend backend in
-  let background_path = Filename.concat project_root "bg.jpeg" in
-  let logo_path = Filename.concat project_root "logo.jpeg" in
+  let background_path = Filename.concat root "bg.jpeg" in
+  let logo_path = Filename.concat root "logo.jpeg" in
   let window = Gtk_bindings.window_new () in
   Gtk_bindings.window_set_title window "pas catho";
   Gtk_bindings.window_set_default_size window ~width:1200 ~height:850;
@@ -567,7 +515,7 @@ let make_ui backend =
   let zoom_in_button = Gtk_bindings.button_new "A+" in
   let goto_button = Gtk_bindings.button_new ">" in
   let back_button = Gtk_bindings.button_new "Back" in
-  let highlights = load_highlights project_root in
+  let highlights = load_highlights root in
   let logo_image = Gtk_bindings.image_new_from_file logo_path in
   Gtk_bindings.flow_box_set_selection_mode source_flow 0;
   Gtk_bindings.scrolled_window_set_policy scroll ~h:1 ~v:1;
@@ -584,7 +532,8 @@ let make_ui backend =
   Gtk_bindings.container_add window root_box;
   let ui =
     {
-      backend;
+      root;
+      names;
       block = false;
       suppress_history = false;
       translation = "bible_aelf";
@@ -694,8 +643,7 @@ let make_ui backend =
   let button_height = Gtk_bindings.widget_get_allocated_height zoom_out_button in
   if button_height > 0 then Gtk_bindings.image_set_from_file_scaled logo_image logo_path ~height:(max 1 (button_height / 10));
   load_translations ui;
-  let raw_articles = run ui.backend [ "articles" ] in
-  let article_entries = raw_articles |> parse_lines |> List.map (fun name -> (name, name)) in
+  let article_entries = Article_store.list ~root |> List.map (fun (article : Article_store.article) -> (article.name, article.name)) in
   fill_combo ui article_combo article_entries;
   load_source_catalog ui;
   show_reference ui ui.current_ref;
@@ -703,7 +651,10 @@ let make_ui backend =
   update_back_button ui;
   ui
 
-let launch backend =
-  let _ui = make_ui backend in
-  Gtk_bindings.main ();
-  Ok ()
+let launch root =
+  match Book_names.load ~root with
+  | Error message -> Error message
+  | Ok names ->
+      let _ui = make_ui root names in
+      Gtk_bindings.main ();
+      Ok ()

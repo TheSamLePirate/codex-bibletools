@@ -78,8 +78,17 @@ let simple_sources =
 
 let find_simple_config source_id = List.find_opt (fun cfg -> String.equal cfg.source_id source_id) simple_sources
 
+let json_cache : (string, (Yojson.Safe.t, string) result) Hashtbl.t = Hashtbl.create 64
+
 let read_json path =
-  try Ok (Yojson.Safe.from_file path) with Yojson.Json_error msg -> Error msg | Sys_error msg -> Error msg
+  match Hashtbl.find_opt json_cache path with
+  | Some cached -> cached
+  | None ->
+      let loaded =
+        try Ok (Yojson.Safe.from_file path) with Yojson.Json_error msg -> Error msg | Sys_error msg -> Error msg
+      in
+      Hashtbl.replace json_cache path loaded;
+      loaded
 
 let datas_path root file = Filename.concat (Filename.concat root "datas") file
 

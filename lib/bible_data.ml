@@ -23,6 +23,8 @@ type translation = {
   title : string;
   books : book array;
   by_key : (string, int) Hashtbl.t;
+  flat_index : (book * chapter * verse) array Lazy.t;
+  by_reference : (string, int) Hashtbl.t Lazy.t;
 }
 
 type translation_info = {
@@ -61,6 +63,9 @@ let translation_title id =
   | Some title -> title
   | None -> id
 
+let json_cache : (string, (Yojson.Safe.t, string) result) Hashtbl.t = Hashtbl.create 32
+let translation_cache : (string, (translation, string) result) Hashtbl.t = Hashtbl.create 16
+
 let list_bible_files ~root =
   let datas = Filename.concat root "datas" in
   try
@@ -82,7 +87,14 @@ let available_translations ~root =
   Ok (List.map (fun id -> { id; title = translation_title id }) ids)
 
 let read_json_file path =
-  try Ok (Yojson.Safe.from_file path) with Yojson.Json_error message -> Error message | Sys_error message -> Error message
+  match Hashtbl.find_opt json_cache path with
+  | Some cached -> cached
+  | None ->
+      let loaded =
+        try Ok (Yojson.Safe.from_file path) with Yojson.Json_error message -> Error message | Sys_error message -> Error message
+      in
+      Hashtbl.replace json_cache path loaded;
+      loaded
 
 let json_intish json ~default =
   match json with
@@ -160,17 +172,45 @@ let index_books books =
     books;
   index
 
+let reference_key book chapter verse_number = Printf.sprintf "%s\t%d\t%d" book chapter verse_number
+
+let build_flat_index books =
+  Array.to_list books
+  |> List.concat_map (fun book ->
+         Array.to_list book.chapters
+         |> List.concat_map (fun chapter ->
+                Array.to_list chapter.verses
+                |> List.map (fun verse -> (book, chapter, verse))))
+  |> Array.of_list
+
+let build_reference_index verses =
+  let index = Hashtbl.create (Array.length verses * 2) in
+  Array.iteri
+    (fun i ((book, chapter, verse) : book * chapter * verse) ->
+      Hashtbl.replace index (reference_key book.canonical_title chapter.number verse.number) i)
+    verses;
+  index
+
 let load_translation ~root ~names ~id =
   let path = Filename.concat (Filename.concat root "datas") (id ^ ".json") in
-  let* json = read_json_file path in
-  let books =
-    json |> member "Testaments" |> to_list
-    |> List.concat_map (fun testament -> testament |> member "Books" |> to_list)
-    |> List.map (book_of_json names)
-    |> Array.of_list
-  in
-  let by_key = index_books books in
-  Ok { title = translation_title id; books; by_key }
+  match Hashtbl.find_opt translation_cache path with
+  | Some cached -> cached
+  | None ->
+      let loaded =
+        let* json = read_json_file path in
+        let books =
+          json |> member "Testaments" |> to_list
+          |> List.concat_map (fun testament -> testament |> member "Books" |> to_list)
+          |> List.map (book_of_json names)
+          |> Array.of_list
+        in
+        let by_key = index_books books in
+        let flat_index = lazy (build_flat_index books) in
+        let by_reference = lazy (build_reference_index (Lazy.force flat_index)) in
+        Ok { title = translation_title id; books; by_key; flat_index; by_reference }
+      in
+      Hashtbl.replace translation_cache path loaded;
+      loaded
 
 let books translation =
   Array.to_list translation.books
@@ -229,30 +269,14 @@ let chapter translation reference =
   Ok (book.title, chapter)
 
 let flatten_index translation =
-  Array.to_list translation.books
-  |> List.concat_map (fun book ->
-         Array.to_list book.chapters
-         |> List.concat_map (fun chapter ->
-                Array.to_list chapter.verses
-                |> List.map (fun verse -> (book, chapter, verse))))
-  |> Array.of_list
+  Lazy.force translation.flat_index
 
 let find_reference_index translation reference =
   let verses = flatten_index translation in
-  let matches ((book, chapter, verse) : book * chapter * verse) =
-    String.equal book.canonical_title reference.Bible_reference.book
-    && chapter.number = reference.chapter
-    &&
-    match reference.verses.first_verse with
-    | Some verse_number -> verse.number = verse_number
-    | None -> verse.number = 1
-  in
-  let rec loop index =
-    if index >= Array.length verses then None
-    else if matches verses.(index) then Some (verses, index)
-    else loop (index + 1)
-  in
-  loop 0
+  let verse_number = Option.value reference.Bible_reference.verses.first_verse ~default:1 in
+  match Hashtbl.find_opt (Lazy.force translation.by_reference) (reference_key reference.book reference.chapter verse_number) with
+  | Some index -> Some (verses, index)
+  | None -> None
 
 let navigate translation reference direction =
   match find_reference_index translation reference with
