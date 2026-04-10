@@ -10,12 +10,16 @@ val window_set_title : widget -> string -> unit
 val window_set_default_size : widget -> width:int -> height:int -> unit
 
 val box_new : vertical:bool -> spacing:int -> widget
+val flow_box_new : unit -> widget
+val flow_box_set_selection_mode : widget -> int -> unit
 val container_add : widget -> widget -> unit
 val box_pack_start : widget -> widget -> expand:bool -> fill:bool -> padding:int -> unit
 
 val label_new : string -> widget
 val label_set_text : widget -> string -> unit
+val label_set_markup : widget -> string -> unit
 val label_set_line_wrap : widget -> bool -> unit
+val label_set_selectable : widget -> bool -> unit
 val widget_override_font : widget -> string -> unit
 
 val entry_new : unit -> widget
@@ -49,3 +53,4 @@ val connect_destroy : widget -> (unit -> unit) -> unit
 val connect_clicked : widget -> (unit -> unit) -> unit
 val connect_changed : widget -> (unit -> unit) -> unit
 val connect_activate : widget -> (unit -> unit) -> unit
+val connect_activate_link : widget -> (string -> unit) -> unit

@@ -10,12 +10,16 @@ external window_set_title : widget -> string -> unit = "caml_gtk_window_set_titl
 external window_set_default_size : widget -> width:int -> height:int -> unit = "caml_gtk_window_set_default_size_bc" "caml_gtk_window_set_default_size"
 
 external box_new : vertical:bool -> spacing:int -> widget = "caml_gtk_box_new_bc" "caml_gtk_box_new"
+external flow_box_new : unit -> widget = "caml_gtk_flow_box_new"
+external flow_box_set_selection_mode : widget -> int -> unit = "caml_gtk_flow_box_set_selection_mode"
 external container_add : widget -> widget -> unit = "caml_gtk_container_add"
 external box_pack_start : widget -> widget -> expand:bool -> fill:bool -> padding:int -> unit = "caml_gtk_box_pack_start_bc" "caml_gtk_box_pack_start"
 
 external label_new : string -> widget = "caml_gtk_label_new"
 external label_set_text : widget -> string -> unit = "caml_gtk_label_set_text"
+external label_set_markup : widget -> string -> unit = "caml_gtk_label_set_markup"
 external label_set_line_wrap : widget -> bool -> unit = "caml_gtk_label_set_line_wrap"
+external label_set_selectable : widget -> bool -> unit = "caml_gtk_label_set_selectable"
 external widget_override_font : widget -> string -> unit = "caml_gtk_widget_override_font"
 
 external entry_new : unit -> widget = "caml_gtk_entry_new"
@@ -49,3 +53,4 @@ external connect_destroy : widget -> (unit -> unit) -> unit = "caml_gtk_connect_
 external connect_clicked : widget -> (unit -> unit) -> unit = "caml_gtk_connect_clicked"
 external connect_changed : widget -> (unit -> unit) -> unit = "caml_gtk_connect_changed"
 external connect_activate : widget -> (unit -> unit) -> unit = "caml_gtk_connect_activate"
+external connect_activate_link : widget -> (string -> unit) -> unit = "caml_gtk_connect_activate_link"

@@ -29,8 +29,7 @@ type t = {
   status_label : Gtk_bindings.widget;
   title_label : Gtk_bindings.widget;
   ref_label : Gtk_bindings.widget;
-  text_view : Gtk_bindings.widget;
-  output_buffer : Gtk_bindings.text_buffer;
+  output_label : Gtk_bindings.widget;
   translation_combo : combo_state;
   source_combo : combo_state;
   levels : level_state array;
@@ -60,11 +59,14 @@ let set_status ui text =
   ui.status <- text;
   Gtk_bindings.label_set_text ui.status_label text
 
+let escape_markup text =
+  text |> String.split_on_char '&' |> String.concat "&amp;" |> String.split_on_char '<' |> String.concat "&lt;" |> String.split_on_char '>' |> String.concat "&gt;"
+
 let apply_font_sizes ui =
   Gtk_bindings.widget_override_font ui.title_label (Printf.sprintf "Sans Bold %d" ui.title_size);
   Gtk_bindings.widget_override_font ui.ref_label (Printf.sprintf "Sans %d" (max 12 (ui.text_size - 1)));
   Gtk_bindings.widget_override_font ui.status_label (Printf.sprintf "Sans %d" (max 11 (ui.text_size - 2)));
-  Gtk_bindings.widget_override_font ui.text_view (Printf.sprintf "Sans %d" ui.text_size)
+  Gtk_bindings.widget_override_font ui.output_label (Printf.sprintf "Sans %d" ui.text_size)
 
 let parse_lines text =
   text |> String.split_on_char '\n' |> List.filter (fun line -> line <> "")
@@ -91,10 +93,12 @@ let combo_value combo =
   | Some label ->
       List.find_map (fun (value, text) -> if String.equal text label then Some value else None) combo.entries
 
+let plain_markup text = escape_markup text
+
 let set_output ui ~title ~reference ~body =
   Gtk_bindings.label_set_text ui.title_label title;
   Gtk_bindings.label_set_text ui.ref_label reference;
-  Gtk_bindings.text_buffer_set_text ui.output_buffer body
+  Gtk_bindings.label_set_markup ui.output_label (plain_markup body)
 
 let translation_of_ui ui = ui.translation
 
@@ -109,6 +113,11 @@ let chapter_target ui reference =
   match run ui.backend [ "chapter-ref"; "--translation"; translation_of_ui ui; "--reference"; reference ] |> String.trim with
   | "" -> None
   | target -> Some target
+
+let resolve_internal_article_url ui url =
+  match run ui.backend [ "decode-site-ref"; "--url"; url ] |> String.trim with
+  | "" -> None
+  | reference -> Some reference
 
 let refresh_action_buttons ui =
   let status_text = run ui.backend [ "status-ref"; "--translation"; translation_of_ui ui; "--reference"; ui.current_ref ] in
@@ -306,7 +315,10 @@ let show_article ui =
   | None -> ()
   | Some article ->
       let body = run ui.backend [ "article"; "--name"; article ] in
-      set_output ui ~title:article ~reference:"" ~body;
+      let markup = Article_markdown.render_to_pango_markup ~resolve_internal:(resolve_internal_article_url ui) body in
+      Gtk_bindings.label_set_text ui.title_label article;
+      Gtk_bindings.label_set_text ui.ref_label "";
+      Gtk_bindings.label_set_markup ui.output_label markup;
       set_status ui ("Article: " ^ article);
       Gtk_bindings.widget_set_sensitive ui.chapter_button false;
       Gtk_bindings.widget_set_sensitive ui.prev_button false;
@@ -349,8 +361,7 @@ let make_ui backend =
   let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:6 in
   let row1 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let row2 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
-  let row3 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
-  let row4 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
+  let source_flow = Gtk_bindings.flow_box_new () in
   let row5 = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let row5_left = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
   let row5_spacer = Gtk_bindings.box_new ~vertical:false ~spacing:0 in
@@ -371,11 +382,9 @@ let make_ui backend =
   in
   let article_combo = { widget = Gtk_bindings.combo_box_text_new (); entries = [] } in
   let reference_entry = Gtk_bindings.entry_new () in
-  let text_view = Gtk_bindings.text_view_new () in
-  Gtk_bindings.text_view_set_wrap_mode text_view 2;
-  Gtk_bindings.text_view_set_editable text_view false;
-  Gtk_bindings.text_view_set_cursor_visible text_view false;
-  let output_buffer = Gtk_bindings.text_view_get_buffer text_view in
+  let output_label = Gtk_bindings.label_new "" in
+  Gtk_bindings.label_set_line_wrap output_label true;
+  Gtk_bindings.label_set_selectable output_label true;
   let scroll = Gtk_bindings.scrolled_window_new () in
   let show_button = Gtk_bindings.button_new "Afficher" in
   let chapter_button = Gtk_bindings.button_new "Chapitre" in
@@ -384,10 +393,11 @@ let make_ui backend =
   let zoom_out_button = Gtk_bindings.button_new "A-" in
   let zoom_in_button = Gtk_bindings.button_new "A+" in
   let goto_button = Gtk_bindings.button_new "Aller" in
+  Gtk_bindings.flow_box_set_selection_mode source_flow 0;
   Gtk_bindings.scrolled_window_set_policy scroll ~h:1 ~v:1;
-  Gtk_bindings.container_add scroll text_view;
+  Gtk_bindings.container_add scroll output_label;
   List.iter (Gtk_bindings.box_pack_start root_box ~expand:false ~fill:false ~padding:0)
-    [ row1; row2; row3; row4; title_label; ref_label ];
+    [ row1; row2; source_flow; title_label; ref_label ];
   Gtk_bindings.box_pack_start row5 row5_left ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_spacer ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start row5 row5_right ~expand:false ~fill:false ~padding:0;
@@ -410,8 +420,7 @@ let make_ui backend =
       status_label;
       title_label;
       ref_label;
-      text_view;
-      output_buffer;
+      output_label;
       translation_combo;
       source_combo;
       levels;
@@ -424,22 +433,28 @@ let make_ui backend =
   in
   let pack_label row text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
   let pack_widget row widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
+  let add_source_item label_text widget =
+    let item = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
+    Gtk_bindings.box_pack_start item (create_label label_text) ~expand:false ~fill:false ~padding:0;
+    Gtk_bindings.box_pack_start item widget ~expand:false ~fill:false ~padding:0;
+    Gtk_bindings.container_add source_flow item
+  in
   pack_label row1 "Bible";
   pack_widget row1 translation_combo.widget;
   pack_label row1 "Référence";
   pack_widget row1 reference_entry;
   pack_widget row1 show_button;
   List.iter (pack_widget row2) [ chapter_button; prev_button; next_button ];
-  pack_label row3 "Source";
-  pack_widget row3 source_combo.widget;
-  Array.iteri
-    (fun index level ->
-      let row = if index < 2 then row3 else row4 in
-      pack_widget row level.label;
-      pack_widget row level.combo.widget;
-      pack_widget row level.entry)
+  add_source_item "Source" source_combo.widget;
+  Array.iter
+    (fun level ->
+      let combo_item = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
+      Gtk_bindings.box_pack_start combo_item level.label ~expand:false ~fill:false ~padding:0;
+      Gtk_bindings.box_pack_start combo_item level.combo.widget ~expand:false ~fill:false ~padding:0;
+      Gtk_bindings.box_pack_start combo_item level.entry ~expand:false ~fill:false ~padding:0;
+      Gtk_bindings.container_add source_flow combo_item)
     levels;
-  pack_widget row4 goto_button;
+  Gtk_bindings.container_add source_flow goto_button;
   pack_label row5_left "Article";
   pack_widget row5_left article_combo.widget;
   List.iter (pack_widget row5_right) [ zoom_out_button; zoom_in_button ];
@@ -457,6 +472,13 @@ let make_ui backend =
   Gtk_bindings.connect_clicked zoom_in_button (fun () -> zoom ui 1);
   Gtk_bindings.connect_clicked goto_button (fun () -> goto_source ui);
   Gtk_bindings.connect_activate reference_entry (fun () -> show_reference ui (Gtk_bindings.entry_get_text reference_entry));
+  Gtk_bindings.connect_activate_link output_label (fun uri ->
+      if String.length uri >= 4 && String.sub uri 0 4 = "ref:" then
+        show_reference ui (String.sub uri 4 (String.length uri - 4))
+      else
+        match resolve_internal_article_url ui uri with
+        | Some reference -> show_reference ui reference
+        | None -> set_status ui ("Lien non pris en charge: " ^ uri));
   Gtk_bindings.connect_changed translation_combo.widget (fun () ->
       if not ui.block then (
         match combo_value translation_combo with

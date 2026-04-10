@@ -24,11 +24,15 @@ extern GtkWidget *gtk_window_new(int window_type);
 extern void gtk_window_set_title(gpointer window, const gchar *title);
 extern void gtk_window_set_default_size(gpointer window, int width, int height);
 extern GtkWidget *gtk_box_new(int orientation, int spacing);
+extern GtkWidget *gtk_flow_box_new(void);
+extern void gtk_flow_box_set_selection_mode(gpointer box, int mode);
 extern void gtk_container_add(gpointer container, gpointer widget);
 extern void gtk_box_pack_start(gpointer box, gpointer child, gboolean expand, gboolean fill, guint padding);
 extern GtkWidget *gtk_label_new(const gchar *text);
 extern void gtk_label_set_text(gpointer label, const gchar *text);
+extern void gtk_label_set_markup(gpointer label, const gchar *str);
 extern void gtk_label_set_line_wrap(gpointer label, gboolean wrap);
+extern void gtk_label_set_selectable(gpointer label, gboolean setting);
 extern void gtk_widget_override_font(gpointer widget, const PangoFontDescription *font_desc);
 extern GtkWidget *gtk_entry_new(void);
 extern const gchar *gtk_entry_get_text(gpointer entry);
@@ -59,6 +63,7 @@ extern gulong g_signal_connect_data(gpointer instance, const gchar *detailed_sig
 #define GTK_WINDOW_TOPLEVEL 0
 #define GTK_ORIENTATION_HORIZONTAL 0
 #define GTK_ORIENTATION_VERTICAL 1
+#define GTK_SELECTION_NONE 0
 
 static value wrap_ptr(void *ptr)
 {
@@ -102,6 +107,39 @@ static value connect_signal(value widget, const char *signal_name, value closure
   data->closure = closure;
   caml_register_global_root(&data->closure);
   g_signal_connect_data(unwrap_ptr(widget), signal_name, (GCallback)generic_callback, data, destroy_callback_data, 0);
+  CAMLreturn(Val_unit);
+}
+
+struct string_callback_data {
+  value closure;
+};
+
+static void destroy_string_callback_data(gpointer data, gpointer closure)
+{
+  (void)closure;
+  struct string_callback_data *cb = (struct string_callback_data *)data;
+  caml_remove_global_root(&cb->closure);
+  free(cb);
+}
+
+static gboolean activate_link_callback(gpointer widget, const gchar *uri, gpointer data)
+{
+  CAMLparam0();
+  CAMLlocal1(argument);
+  (void)widget;
+  argument = caml_copy_string(uri);
+  caml_callback(((struct string_callback_data *)data)->closure, argument);
+  CAMLreturnT(gboolean, 1);
+}
+
+static value connect_string_signal(value widget, const char *signal_name, value closure)
+{
+  CAMLparam2(widget, closure);
+  struct string_callback_data *data = malloc(sizeof(struct string_callback_data));
+  if (data == NULL) caml_failwith("malloc");
+  data->closure = closure;
+  caml_register_global_root(&data->closure);
+  g_signal_connect_data(unwrap_ptr(widget), signal_name, (GCallback)activate_link_callback, data, destroy_string_callback_data, 0);
   CAMLreturn(Val_unit);
 }
 
@@ -166,6 +204,19 @@ CAMLprim value caml_gtk_box_new_bc(value *argv, int argn)
   return caml_gtk_box_new(argv[0], argv[1]);
 }
 
+CAMLprim value caml_gtk_flow_box_new(value unit)
+{
+  CAMLparam1(unit);
+  CAMLreturn(wrap_ptr(gtk_flow_box_new()));
+}
+
+CAMLprim value caml_gtk_flow_box_set_selection_mode(value widget, value mode)
+{
+  CAMLparam2(widget, mode);
+  gtk_flow_box_set_selection_mode(unwrap_ptr(widget), Int_val(mode));
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value caml_gtk_container_add(value container, value widget)
 {
   CAMLparam2(container, widget);
@@ -199,10 +250,24 @@ CAMLprim value caml_gtk_label_set_text(value widget, value text)
   CAMLreturn(Val_unit);
 }
 
+CAMLprim value caml_gtk_label_set_markup(value widget, value text)
+{
+  CAMLparam2(widget, text);
+  gtk_label_set_markup(unwrap_ptr(widget), String_val(text));
+  CAMLreturn(Val_unit);
+}
+
 CAMLprim value caml_gtk_label_set_line_wrap(value widget, value wrap)
 {
   CAMLparam2(widget, wrap);
   gtk_label_set_line_wrap(unwrap_ptr(widget), Bool_val(wrap));
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_label_set_selectable(value widget, value setting)
+{
+  CAMLparam2(widget, setting);
+  gtk_label_set_selectable(unwrap_ptr(widget), Bool_val(setting));
   CAMLreturn(Val_unit);
 }
 
@@ -389,4 +454,9 @@ CAMLprim value caml_gtk_connect_changed(value widget, value closure)
 CAMLprim value caml_gtk_connect_activate(value widget, value closure)
 {
   return connect_signal(widget, "activate", closure);
+}
+
+CAMLprim value caml_gtk_connect_activate_link(value widget, value closure)
+{
+  return connect_string_signal(widget, "activate-link", closure);
 }

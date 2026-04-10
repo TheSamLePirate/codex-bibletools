@@ -215,6 +215,15 @@ let () =
   assert_true (hadith_chapter_ref = None) "Les hadiths sans navigation de chapitre doivent désactiver le bouton chapitre.";
   let decoded_problematic = Sources.decode_site_reference_url "https://pascatho.ovh/?Deut-13%3A6-10" in
   assert_true (decoded_problematic = Some "Deut 13,6-10") "Le décodage d'URL doit résoudre Deut-13:6-10.";
+  let article_markup =
+    Article_markdown.render_to_pango_markup
+      ~resolve_internal:(fun url ->
+        if String.equal url "https://pascatho.ovh/?Gn-20%3A11-12" then Some "Gn 20,11-12" else None)
+      "**Bible.** [Gn-20:11-12](https://pascatho.ovh/?Gn-20%3A11-12)"
+  in
+  assert_true
+    (Str.string_match (Str.regexp ".*<a href=\"ref:Gn 20,11-12\">Gn-20:11-12</a>.*") article_markup 0)
+    "Les liens d'articles doivent devenir des liens internes quand la référence est connue.";
   let binary = Filename.concat root "_build/default/bin/pascatho.exe" in
   let chapter_lines =
     run_command_capture_lines
