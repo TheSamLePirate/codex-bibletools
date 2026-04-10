@@ -26,6 +26,7 @@ type t = {
   mutable status : string;
   mutable text_size : int;
   mutable title_size : int;
+  highlights : string list;
   mutable history : View_history.t;
   window : Gtk_bindings.widget;
   status_label : Gtk_bindings.widget;
@@ -96,12 +97,14 @@ let combo_value combo =
   | Some label ->
       List.find_map (fun (value, text) -> if String.equal text label then Some value else None) combo.entries
 
-let plain_markup text = escape_markup text
+let plain_markup ui text =
+  Article_markdown.render_plain_to_pango_markup ~highlights:ui.highlights text
+  |> String.split_on_char '\n' |> String.concat "&#10;"
 
 let set_output ui ~title ~reference ~body =
   Gtk_bindings.label_set_text ui.title_label title;
   Gtk_bindings.label_set_text ui.ref_label reference;
-  Gtk_bindings.label_set_markup ui.output_label (plain_markup body)
+  Gtk_bindings.label_set_markup ui.output_label (plain_markup ui body)
 
 let translation_of_ui ui = ui.translation
 
@@ -332,7 +335,10 @@ let show_reference ui reference =
 let render_article_by_name ui article =
   select_combo_value ui ui.article_combo article;
   let body = run ui.backend [ "article"; "--name"; article ] in
-  let markup = Article_markdown.render_to_pango_markup ~resolve_internal:(resolve_internal_article_url ui) body in
+  let markup =
+    Article_markdown.render_to_pango_markup ~highlights:ui.highlights
+      ~resolve_internal:(resolve_internal_article_url ui) body
+  in
   record_view ui (View_history.Article article);
   Gtk_bindings.label_set_text ui.title_label article;
   Gtk_bindings.label_set_text ui.ref_label "";
@@ -393,6 +399,23 @@ let create_label text =
 let project_root_from_backend backend =
   backend |> Filename.dirname |> Filename.dirname |> Filename.dirname |> Filename.dirname
 
+let load_highlights project_root =
+  let path = Filename.concat project_root "highlights" in
+  if Sys.file_exists path then
+    let channel = open_in path in
+    Fun.protect
+      ~finally:(fun () -> close_in channel)
+      (fun () ->
+        let rec loop acc =
+          match input_line channel with
+          | line ->
+              let line = String.trim line in
+              if line = "" || String.starts_with ~prefix:"#" line then loop acc else loop (line :: acc)
+          | exception End_of_file -> List.rev acc
+        in
+        loop [])
+  else []
+
 let make_ui backend =
   Gtk_bindings.init ();
   let project_root = project_root_from_backend backend in
@@ -438,6 +461,7 @@ let make_ui backend =
   let goto_button = Gtk_bindings.button_new "Aller" in
   let back_button = Gtk_bindings.button_new "Back" in
   let logo_path = Filename.concat project_root "logo.jpeg" in
+  let highlights = load_highlights project_root in
   let logo_image = Gtk_bindings.image_new_from_file logo_path in
   Gtk_bindings.flow_box_set_selection_mode source_flow 0;
   Gtk_bindings.scrolled_window_set_policy scroll ~h:1 ~v:1;
@@ -462,6 +486,7 @@ let make_ui backend =
       status = "";
       text_size = 16;
       title_size = 22;
+      highlights;
       history = View_history.empty;
       window;
       status_label;

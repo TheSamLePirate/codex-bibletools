@@ -532,4 +532,11 @@ let main () =
         1)
   else Cmd.eval (Cmd.group (Cmd.info "pascatho") commands)
 
-let () = Stdlib.exit (main ())
+let () =
+  Printexc.record_backtrace true;
+  try Stdlib.exit (main ()) with
+  | exn ->
+      prerr_endline ("Fatal error: exception " ^ Printexc.to_string exn);
+      let backtrace = Printexc.get_backtrace () in
+      if String.trim backtrace <> "" then prerr_endline backtrace;
+      Stdlib.exit 2

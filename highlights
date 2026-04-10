@@ -1,0 +1,14 @@
+# Expressions régulières appliquées au texte brut des articles
+[Ff]emmes?
+[Ee]sclav[a-z]*
+[Ff]rapp[a-z]*
+[Ss]erv[a-z]*
+[Dd]roits? de l'homme
+[Dd]ignité
+[Dd]roits?
+[Ll]ibertés?
+[EeÉé]galité
+[Ff]raternité
+[Rr]eligion
+[EeÉé]ducation
+[Pp]ropriété

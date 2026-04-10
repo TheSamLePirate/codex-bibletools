@@ -78,10 +78,7 @@ let list_article_urls root =
 let article_reference_supported reference =
   let lower = String.lowercase_ascii reference in
   not
-    (string_starts_with ~prefix:"Soc." reference
-    || string_starts_with ~prefix:"Rael." reference
-    || string_starts_with ~prefix:"DH." reference
-    || string_starts_with ~prefix:"Cat.Comp." reference
+    (string_starts_with ~prefix:"DH." reference
     || (Str.string_match (Str.regexp "^[a-z]+:") lower 0
        &&
        not
@@ -132,6 +129,11 @@ let () =
   let sources = Sources.list_sources ~root in
   assert_true (List.exists (fun (source : Sources.source_descriptor) -> String.equal source.id "Vatican") sources) "Le catalogue de sources doit inclure Vatican.";
   assert_true (List.exists (fun (source : Sources.source_descriptor) -> String.equal source.id "Hadiths") sources) "Le catalogue de sources doit inclure Hadiths.";
+  assert_true (List.exists (fun (source : Sources.source_descriptor) -> String.equal source.id "Rael") sources) "Le catalogue de sources doit inclure Rael.";
+  assert_true (List.exists (fun (source : Sources.source_descriptor) -> String.equal source.id "Compendium") sources) "Le catalogue de sources doit inclure le Compendium.";
+  assert_true
+    (List.exists (fun (source : Sources.source_descriptor) -> String.equal source.id "CompendiumSocial") sources)
+    "Le catalogue de sources doit inclure le Compendium social.";
   let* quran_options = Sources.selector_options ~root ~names ~bible_translation:"bible_aelf" ~source:"Coran" ~path:[] in
   assert_true (List.length quran_options = 114) "Le Coran doit exposer 114 sourates.";
   let* quran_verse_options = Sources.selector_options ~root ~names ~bible_translation:"bible_aelf" ~source:"Coran" ~path:[ "1" ] in
@@ -176,6 +178,37 @@ let () =
   in
   let* rendered_cat_t = Sources.render_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:cat_t_ref in
   assert_true (String.equal rendered_cat_t.source_id "CatechismeTrente") "Le rendu CatT doit utiliser la bonne source.";
+  let* rael_books = Sources.selector_options ~root ~names ~bible_translation:"bible_aelf" ~source:"Rael" ~path:[] in
+  assert_true (rael_books <> []) "Rael doit exposer ses livres.";
+  let rael_book = (List.hd rael_books).value in
+  let* rael_sections = Sources.selector_options ~root ~names ~bible_translation:"bible_aelf" ~source:"Rael" ~path:[ rael_book ] in
+  assert_true (rael_sections <> []) "Rael doit exposer ses chapitres.";
+  let rael_section = (List.hd rael_sections).value in
+  let* rael_ref =
+    Sources.compile_reference ~root ~names ~bible_translation:"bible_aelf" ~source:"Rael"
+      ~path:[ rael_book; rael_section; "3" ]
+  in
+  let* rendered_rael = Sources.render_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:rael_ref in
+  assert_true (String.equal rendered_rael.source_id "Rael") "Le rendu Rael doit utiliser la bonne source.";
+  assert_true (String.trim rendered_rael.body <> "") "Le rendu Rael doit être non vide.";
+  let* compendium_count =
+    Sources.selector_count ~root ~names ~bible_translation:"bible_aelf" ~source:"Compendium" ~path:[]
+  in
+  assert_true (compendium_count = Some 597) "Le Compendium doit exposer 597 articles.";
+  let* rendered_compendium =
+    Sources.render_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Cat.Comp.1"
+  in
+  assert_true (String.equal rendered_compendium.source_id "Compendium") "Le rendu Compendium doit utiliser la bonne source.";
+  let* compendium_social_count =
+    Sources.selector_count ~root ~names ~bible_translation:"bible_aelf" ~source:"CompendiumSocial" ~path:[]
+  in
+  assert_true (compendium_social_count = Some 583) "Le Compendium social doit exposer 583 articles.";
+  let* rendered_compendium_social =
+    Sources.render_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Soc.1"
+  in
+  assert_true
+    (String.equal rendered_compendium_social.source_id "CompendiumSocial")
+    "Le rendu Compendium social doit utiliser la bonne source.";
   let* hadith_authors = Sources.selector_options ~root ~names ~bible_translation:"bible_aelf" ~source:"Hadiths" ~path:[] in
   assert_true (List.exists (fun (option : Sources.selector_option) -> String.equal option.value "bukhari") hadith_authors) "Les hadiths doivent exposer Bukhari.";
   let* hadith_books =
@@ -226,6 +259,20 @@ let () =
   assert_true (quran_chapter_ref = Some "Coran:1.1-7") "Le bouton chapitre doit viser la plage complète de la sourate.";
   let* can_chapter_ref = Sources.chapter_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Can.377" in
   assert_true (can_chapter_ref = Some "Can.1-1751") "Les sources simples doivent exposer leur plage complète via chapter_reference.";
+  let* rael_chapter_ref = Sources.chapter_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:rael_ref in
+  assert_true (Option.value rael_chapter_ref ~default:"" <> "") "Rael doit exposer une plage de chapitre.";
+  let* compendium_chapter_ref =
+    Sources.chapter_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Cat.Comp.1"
+  in
+  assert_true
+    (compendium_chapter_ref = Some "Cat.Comp.1-597")
+    "Le Compendium doit exposer sa plage complète via chapter_reference.";
+  let* compendium_social_chapter_ref =
+    Sources.chapter_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Soc.1"
+  in
+  assert_true
+    (compendium_social_chapter_ref = Some "Soc.1-583")
+    "Le Compendium social doit exposer sa plage complète via chapter_reference.";
   let* hadith_chapter_ref = Sources.chapter_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"muslim:4a" in
   assert_true (hadith_chapter_ref = None) "Les hadiths sans navigation de chapitre doivent désactiver le bouton chapitre.";
   let decoded_problematic = Sources.decode_site_reference_url "https://pascatho.ovh/?Deut-13%3A6-10" in
@@ -239,6 +286,36 @@ let () =
   assert_true
     (Str.string_match (Str.regexp ".*<a href=\"ref:Gn 20,11-12\">Gn-20:11-12</a>.*") article_markup 0)
     "Les liens d'articles doivent devenir des liens internes quand la référence est connue.";
+  let highlighted_markup =
+    Article_markdown.render_to_pango_markup ~highlights:[ "[Ll]iberté"; "[Dd]ignité" ] ~resolve_internal:(fun _ -> None)
+      "La liberté protège la dignité."
+  in
+  assert_true
+    (Str.string_match (Str.regexp ".*<b>liberté</b> protège la <b>dignité</b>.*") highlighted_markup 0)
+    "Le rendu d'article doit pouvoir mettre en gras les mots-clés du fichier highlights.";
+  let heading_markup =
+    Article_markdown.render_to_pango_markup ~highlights:[ "[Ll]iberté" ] ~resolve_internal:(fun _ -> None) "# Liberté"
+  in
+  assert_true
+    (Str.string_match (Str.regexp ".*<span size=\"x-large\" weight=\"bold\"><b>Liberté</b></span>.*") heading_markup 0)
+    "Le rendu markdown des titres ne doit pas lever d'exception Str.group_end.";
+  let link_and_highlight_markup =
+    Article_markdown.render_to_pango_markup ~highlights:[ "[Ff]emme" ]
+      ~resolve_internal:(fun url -> if String.equal url "https://pascatho.ovh/?Gn-3%3A16" then Some "Gn 3,16" else None)
+      "La femme est mentionnée ici : [Gn-3:16](https://pascatho.ovh/?Gn-3%3A16)"
+  in
+  assert_true
+    (Str.string_match
+       (Str.regexp ".*<b>femme</b>.*<a href=\"ref:gn 3,16\">gn-3:16</a>.*")
+       (String.lowercase_ascii link_and_highlight_markup) 0)
+    "Le rendu article avec highlights regex et liens ne doit pas planter.";
+  let plain_highlight_markup =
+    Article_markdown.render_plain_to_pango_markup ~highlights:[ "[Ll]iberté"; "[Dd]ignité" ]
+      "Liberté\nDignité"
+  in
+  assert_true
+    (Str.string_match (Str.regexp ".*<b>Liberté</b>\n<b>Dignité</b>.*") plain_highlight_markup 0)
+    "Les highlights doivent aussi s'appliquer aux textes de sources non markdown.";
   let binary = Filename.concat root "_build/default/bin/pascatho.exe" in
   let chapter_lines =
     run_command_capture_lines
@@ -275,6 +352,9 @@ let () =
   let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"Can1990" in
   let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"Catechisme" in
   let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"CatechismeE" in
+  let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"Rael" in
+  let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"Compendium" in
+  let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"CompendiumSocial" in
   let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"CatechismeX" in
   let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"CatechismeTrente" in
   let* () = assert_source_roundtrip ~root ~names ~translation:"bible_aelf" ~source:"Hadiths" in

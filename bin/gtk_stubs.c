@@ -198,11 +198,11 @@ static void project_point(double x, double y, double z, int width, int height, d
   double distance = 5.0;
   double perspective = 1.0 / (distance - z);
   double scale = ((width < height) ? width : height) * 0.23;
-  *out_x = width * 0.5 + x * perspective * scale;
-  *out_y = height * 0.5 + y * perspective * scale;
+  *out_x = width * 0.78 + x * perspective * scale;
+  *out_y = height * 0.24 + y * perspective * scale;
 }
 
-static void draw_box_edges(cairo_t *cr, double angle, int width, int height, double hx, double hy, double hz)
+static void draw_box_edges_at(cairo_t *cr, double angle, int width, int height, double cx, double cy, double cz, double hx, double hy, double hz)
 {
   static const int edges[12][2] = {
     {0, 1}, {1, 2}, {2, 3}, {3, 0},
@@ -210,8 +210,8 @@ static void draw_box_edges(cairo_t *cr, double angle, int width, int height, dou
     {0, 4}, {1, 5}, {2, 6}, {3, 7}
   };
   double vertices[8][3] = {
-    {-hx, -hy, -hz}, {hx, -hy, -hz}, {hx, hy, -hz}, {-hx, hy, -hz},
-    {-hx, -hy, hz}, {hx, -hy, hz}, {hx, hy, hz}, {-hx, hy, hz}
+    {cx - hx, cy - hy, cz - hz}, {cx + hx, cy - hy, cz - hz}, {cx + hx, cy + hy, cz - hz}, {cx - hx, cy + hy, cz - hz},
+    {cx - hx, cy - hy, cz + hz}, {cx + hx, cy - hy, cz + hz}, {cx + hx, cy + hy, cz + hz}, {cx - hx, cy + hy, cz + hz}
   };
   int i;
   for (i = 0; i < 12; i++) {
@@ -239,13 +239,12 @@ static gboolean background_draw_callback(gpointer widget, cairo_t *cr, gpointer 
     gdk_cairo_set_source_pixbuf(cr, background->bg_pixbuf, x, y);
     cairo_paint(cr);
   }
-  cairo_set_source_rgb(cr, 0.78, 0.89, 1.0);
+  cairo_set_source_rgb(cr, 0.95, 0.95, 0.96);
   cairo_paint_with_alpha(cr, 0.74);
-  cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-  cairo_set_line_width(cr, 1.4);
-  draw_box_edges(cr, background->angle, width, height, 1.55, 0.26, 0.26);
-  draw_box_edges(cr, background->angle, width, height, 0.26, 1.55, 0.26);
-  draw_box_edges(cr, background->angle, width, height, 0.26, 0.26, 1.55);
+  cairo_set_source_rgb(cr, 0.45, 0.28, 0.12);
+  cairo_set_line_width(cr, 2.8);
+  draw_box_edges_at(cr, background->angle, width, height, 0.0, 0.42, 0.0, 0.20, 1.72, 0.20);
+  draw_box_edges_at(cr, background->angle, width, height, 0.0, -0.42, 0.0, 0.95, 0.20, 0.20);
   cairo_stroke(cr);
   return 0;
 }

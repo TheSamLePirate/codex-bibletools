@@ -42,6 +42,9 @@ type parsed_ref =
   | Quran of int * int * int option
   | Vatican of string * string * int * int option
   | Simple of string * int * int option
+  | Rael of int * int * int * int option
+  | Compendium of int * int option
+  | CompendiumSocial of int * int option
   | CatechismeX of int * int * int * int option
   | CatechismeTrente of int * int * int * int * int option
   | HadithBook of string * string * int * int option
@@ -90,6 +93,9 @@ let source_descriptors =
     { id = "Can1990"; label = "Code canonique 1990"; nomenclature = [ "article" ] };
     { id = "Catechisme"; label = "Catéchisme"; nomenclature = [ "article" ] };
     { id = "CatechismeE"; label = "Catéchisme des évêques"; nomenclature = [ "article" ] };
+    { id = "Rael"; label = "Rael"; nomenclature = [ "livre"; "chapitre"; "page" ] };
+    { id = "Compendium"; label = "Compendium du catéchisme"; nomenclature = [ "article" ] };
+    { id = "CompendiumSocial"; label = "Compendium de la doctrine sociale"; nomenclature = [ "article" ] };
     { id = "CatechismeX"; label = "Catéchisme de Pie X"; nomenclature = [ "partie"; "chapitre"; "page" ] };
     {
       id = "CatechismeTrente";
@@ -199,6 +205,35 @@ let sort_book_id left right =
 
 let load_catechisme_x ~root = read_json (datas_path root "catechisme_pieX.json")
 let load_catechisme_trente ~root = read_json (datas_path root "catechisme_trente.json")
+let load_rael ~root = read_json (datas_path root "Rael.json")
+let load_compendium ~root = read_json (datas_path root "compendium.json")
+let load_compendium_social ~root = read_json (datas_path root "compendium_sociale.json")
+
+let rael_books json = json |> to_list
+let compendium_items json = json |> to_list
+let compendium_social_items json = json |> to_list
+
+let rael_book_title book = book |> member "title" |> to_string
+let rael_sections book = book |> member "sections" |> to_list
+let rael_section_title section = section |> member "title" |> to_string
+let rael_pages section = section |> member "pages" |> to_list
+let rael_page_number page = page |> member "page" |> to_int
+
+let rael_page_text page =
+  page |> member "text" |> to_list |> filter_string |> List.map String.trim
+  |> List.filter (fun line -> line <> "")
+  |> String.concat "\n"
+
+let render_compendium_item index item =
+  let question = item |> member "Q" |> to_string_option |> Option.value ~default:"" |> String.trim in
+  let response = item |> member "R" |> to_string_option |> Option.value ~default:"" |> String.trim in
+  Printf.sprintf "%d. %s\n\n%s" index question response |> String.trim
+
+let render_compendium_social_item index item =
+  let lines = item |> to_list |> filter_string |> List.map String.trim |> List.filter (fun line -> line <> "") in
+  match lines with
+  | [] -> Printf.sprintf "%d." index
+  | _ -> Printf.sprintf "%d. %s" index (String.concat "\n" lines)
 
 let quran_sourates json = json |> member "sourates" |> to_list
 let catechisme_x_sections json = json |> member "sections" |> to_list
@@ -244,6 +279,12 @@ let selector_count ~root ~names:_ ~bible_translation:_ ~source ~path =
       in
       let* items = load_simple_array ~root cfg.file in
       Ok (Some (List.length items))
+  | "Compendium", [] ->
+      let* items = load_compendium ~root in
+      Ok (Some (List.length (to_list items)))
+  | "CompendiumSocial", [] ->
+      let* items = load_compendium_social ~root in
+      Ok (Some (List.length (to_list items)))
   | "Hadiths", [ author; book ] ->
       let* items = load_hadith_file ~root author in
       let count =
@@ -314,6 +355,49 @@ let selector_options ~root ~names ~bible_translation ~source ~path =
   | "Vatican", _ -> Ok []
   | ("Can" | "Can1917" | "Can1990" | "Catechisme" | "CatechismeE"), [] -> simple_selector_options ~root source
   | ("Can" | "Can1917" | "Can1990" | "Catechisme" | "CatechismeE"), _ -> Ok []
+  | "Rael", [] ->
+      let* doc = load_rael ~root in
+      Ok (doc |> to_list |> List.map (fun book -> { value = book |> member "title" |> to_string; label = book |> member "title" |> to_string }))
+  | "Rael", [ book_title ] ->
+      let* doc = load_rael ~root in
+      let books = doc |> to_list in
+      let* book =
+        match List.find_opt (fun book -> String.equal (book |> member "title" |> to_string) book_title) books with
+        | Some book -> Ok book
+        | None -> Error "Livre Rael introuvable."
+      in
+      Ok
+        (book |> member "sections" |> to_list
+        |> List.map (fun section -> { value = section |> member "title" |> to_string; label = section |> member "title" |> to_string }))
+  | "Rael", [ book_title; section_title ] ->
+      let* doc = load_rael ~root in
+      let books = doc |> to_list in
+      let* book =
+        match List.find_opt (fun book -> String.equal (book |> member "title" |> to_string) book_title) books with
+        | Some book -> Ok book
+        | None -> Error "Livre Rael introuvable."
+      in
+      let* section =
+        match List.find_opt (fun section -> String.equal (section |> member "title" |> to_string) section_title) (book |> member "sections" |> to_list) with
+        | Some section -> Ok section
+        | None -> Error "Chapitre Rael introuvable."
+      in
+      Ok
+        (section |> member "pages" |> to_list
+        |> List.map (fun page ->
+               let number = page |> member "page" |> to_int in
+               { value = string_of_int number; label = string_of_int number }))
+  | "Rael", _ -> Ok []
+  | "Compendium", [] ->
+      let* items = load_compendium ~root in
+      let items = items |> to_list in
+      Ok (List.init (List.length items) (fun i -> let n = i + 1 in { value = string_of_int n; label = string_of_int n }))
+  | "Compendium", _ -> Ok []
+  | "CompendiumSocial", [] ->
+      let* items = load_compendium_social ~root in
+      let items = items |> to_list in
+      Ok (List.init (List.length items) (fun i -> let n = i + 1 in { value = string_of_int n; label = string_of_int n }))
+  | "CompendiumSocial", _ -> Ok []
   | "CatechismeX", [] ->
       let* doc = load_catechisme_x ~root in
       Ok (catechisme_x_sections doc |> List.map (fun section -> { value = section |> member "title" |> to_string; label = section |> member "title" |> to_string }))
@@ -454,6 +538,24 @@ let compile_reference ~root ~names ~bible_translation ~source ~path =
         | None -> Error ("Source simple inconnue: " ^ source)
       in
       Ok (cfg.prefix ^ article)
+  | "Rael", [ book_title; section_title; page ] ->
+      let* doc = load_rael ~root in
+      let books = doc |> to_list in
+      let* book_index =
+        match find_index (fun book -> String.equal (book |> member "title" |> to_string) book_title) books with
+        | Some index -> Ok index
+        | None -> Error "Livre Rael introuvable."
+      in
+      let book = List.nth books book_index in
+      let sections = book |> member "sections" |> to_list in
+      let* section_index =
+        match find_index (fun section -> String.equal (section |> member "title" |> to_string) section_title) sections with
+        | Some index -> Ok index
+        | None -> Error "Chapitre Rael introuvable."
+      in
+      Ok (Printf.sprintf "Rael.%d.%d.%s" book_index section_index page)
+  | "Compendium", [ article ] -> Ok ("Cat.Comp." ^ article)
+  | "CompendiumSocial", [ article ] -> Ok ("Soc." ^ article)
   | "CatechismeX", [ section_title; chapter_title; page ] ->
       let* doc = load_catechisme_x ~root in
       let sections = catechisme_x_sections doc in
@@ -515,6 +617,12 @@ let parse_ref ~names text =
           | kind -> kind
         in
         Ok (Simple (kind, int_of_string (Str.matched_group 2 text), try Some (int_of_string (Str.matched_group 4 text)) with Not_found | Invalid_argument _ -> None))
+      else if Str.string_match (Str.regexp "^Rael\\.\\([0-9]+\\)\\.\\([0-9]+\\)\\.\\([0-9]+\\)\\(-\\([0-9]+\\)\\)?$") text 0 then
+        Ok (Rael (int_of_string (Str.matched_group 1 text), int_of_string (Str.matched_group 2 text), int_of_string (Str.matched_group 3 text), try Some (int_of_string (Str.matched_group 5 text)) with Not_found | Invalid_argument _ -> None))
+      else if Str.string_match (Str.regexp "^Cat\\.Comp\\.\\([0-9]+\\)\\(-\\([0-9]+\\)\\)?$") text 0 then
+        Ok (Compendium (int_of_string (Str.matched_group 1 text), try Some (int_of_string (Str.matched_group 3 text)) with Not_found | Invalid_argument _ -> None))
+      else if Str.string_match (Str.regexp "^Soc\\.\\([0-9]+\\)\\(-\\([0-9]+\\)\\)?$") text 0 then
+        Ok (CompendiumSocial (int_of_string (Str.matched_group 1 text), try Some (int_of_string (Str.matched_group 3 text)) with Not_found | Invalid_argument _ -> None))
       else if Str.string_match (Str.regexp "^CatX\\.\\([0-9]+\\)\\.\\([0-9]+\\)\\.\\([0-9]+\\)\\(-\\([0-9]+\\)\\)?$") text 0 then
         Ok (CatechismeX (int_of_string (Str.matched_group 1 text), int_of_string (Str.matched_group 2 text), int_of_string (Str.matched_group 3 text), try Some (int_of_string (Str.matched_group 5 text)) with Not_found | Invalid_argument _ -> None))
       else if Str.string_match (Str.regexp "^CatT\\.\\([0-9]+\\)\\.\\([0-9]+\\)\\.\\([0-9]+\\)\\.\\([0-9]+\\)\\(-\\([0-9]+\\)\\)?$") text 0 then
@@ -586,6 +694,24 @@ let chapter_reference ~root ~names ~bible_translation ~reference =
       in
       let* items = load_simple_array ~root cfg.file in
       Ok (Some (Printf.sprintf "%s1-%d" cfg.prefix (List.length items)))
+  | Rael (book_index, section_index, _, _) ->
+      let* doc = load_rael ~root in
+      let* book = find_nth (rael_books doc) book_index "Livre Rael introuvable." in
+      let* section = find_nth (rael_sections book) section_index "Chapitre Rael introuvable." in
+      let pages = rael_pages section in
+      let* first_page =
+        match pages with
+        | page :: _ -> Ok (rael_page_number page)
+        | [] -> Error "Section Rael vide."
+      in
+      let last_page = first_page + List.length pages - 1 in
+      Ok (Some (Printf.sprintf "Rael.%d.%d.%d-%d" book_index section_index first_page last_page))
+  | Compendium _ ->
+      let* items = load_compendium ~root in
+      Ok (Some (Printf.sprintf "Cat.Comp.1-%d" (List.length (compendium_items items))))
+  | CompendiumSocial _ ->
+      let* items = load_compendium_social ~root in
+      Ok (Some (Printf.sprintf "Soc.1-%d" (List.length (compendium_social_items items))))
   | CatechismeX (section_index, chapter_index, _, _) ->
       let* doc = load_catechisme_x ~root in
       let* section = find_nth (catechisme_x_sections doc) section_index "Partie introuvable." in
@@ -647,6 +773,84 @@ let render_reference ~root ~names ~bible_translation ~reference =
       in
       Ok { source_id = "Vatican"; reference; title = doc.title; subtitle = Some dossier; body }
   | Simple (kind, first, last) -> render_simple ~root kind first last
+  | Rael (book_index, section_index, first_page, last_page) ->
+      let* doc = load_rael ~root in
+      let* book = find_nth (rael_books doc) book_index "Livre Rael introuvable." in
+      let* section = find_nth (rael_sections book) section_index "Chapitre Rael introuvable." in
+      let pages = rael_pages section in
+      let* minimum_page =
+        match pages with
+        | page :: _ -> Ok (rael_page_number page)
+        | [] -> Error "Section Rael vide."
+      in
+      let maximum_page = minimum_page + List.length pages - 1 in
+      let* from_page, to_page = range_to_bounds ~first:first_page ~last:last_page ~min_value:minimum_page ~max_value:maximum_page in
+      let body =
+        pages
+        |> List.filter_map (fun page ->
+               let number = rael_page_number page in
+               if number < from_page || number > to_page then None
+               else Some (Printf.sprintf "%d. %s" number (rael_page_text page)))
+        |> String.concat "\n\n"
+      in
+      let reference =
+        if from_page = to_page then Printf.sprintf "Rael.%d.%d.%d" book_index section_index from_page
+        else Printf.sprintf "Rael.%d.%d.%d-%d" book_index section_index from_page to_page
+      in
+      Ok
+        {
+          source_id = "Rael";
+          reference;
+          title = rael_book_title book;
+          subtitle = Some (rael_section_title section);
+          body;
+        }
+  | Compendium (first, last) ->
+      let* items = load_compendium ~root in
+      let items = compendium_items items in
+      let* from_index, to_index = range_to_bounds ~first ~last ~min_value:1 ~max_value:(List.length items) in
+      let body =
+        items
+        |> List.mapi (fun index item -> (index + 1, item))
+        |> List.filter (fun (index, _) -> index >= from_index && index <= to_index)
+        |> List.map (fun (index, item) -> render_compendium_item index item)
+        |> String.concat "\n\n"
+      in
+      let reference =
+        if from_index = to_index then Printf.sprintf "Cat.Comp.%d" from_index
+        else Printf.sprintf "Cat.Comp.%d-%d" from_index to_index
+      in
+      Ok
+        {
+          source_id = "Compendium";
+          reference;
+          title = "Compendium du Catéchisme de l'Eglise catholique";
+          subtitle = None;
+          body;
+        }
+  | CompendiumSocial (first, last) ->
+      let* items = load_compendium_social ~root in
+      let items = compendium_social_items items in
+      let* from_index, to_index = range_to_bounds ~first ~last ~min_value:1 ~max_value:(List.length items) in
+      let body =
+        items
+        |> List.mapi (fun index item -> (index + 1, item))
+        |> List.filter (fun (index, _) -> index >= from_index && index <= to_index)
+        |> List.map (fun (index, item) -> render_compendium_social_item index item)
+        |> String.concat "\n\n"
+      in
+      let reference =
+        if from_index = to_index then Printf.sprintf "Soc.%d" from_index
+        else Printf.sprintf "Soc.%d-%d" from_index to_index
+      in
+      Ok
+        {
+          source_id = "CompendiumSocial";
+          reference;
+          title = "Compendium de la doctrine sociale de l'Eglise";
+          subtitle = None;
+          body;
+        }
   | CatechismeX (section_index, chapter_index, first_page, last_page) ->
       let* doc = load_catechisme_x ~root in
       let* section = find_nth (catechisme_x_sections doc) section_index "Partie introuvable." in
@@ -767,6 +971,24 @@ let navigation ~root ~names ~bible_translation ~reference =
       in
       let* items = load_simple_array ~root cfg.file in
       Ok { has_previous = first > 1; has_next = first < List.length items }
+  | Rael (book_index, section_index, page, _) ->
+      let* doc = load_rael ~root in
+      let* book = find_nth (rael_books doc) book_index "Livre Rael introuvable." in
+      let* section = find_nth (rael_sections book) section_index "Chapitre Rael introuvable." in
+      let pages = rael_pages section in
+      let* first_page =
+        match pages with
+        | item :: _ -> Ok (rael_page_number item)
+        | [] -> Error "Section Rael vide."
+      in
+      let last_page = first_page + List.length pages - 1 in
+      Ok { has_previous = page > first_page; has_next = page < last_page }
+  | Compendium (first, _) ->
+      let* items = load_compendium ~root in
+      Ok { has_previous = first > 1; has_next = first < List.length (compendium_items items) }
+  | CompendiumSocial (first, _) ->
+      let* items = load_compendium_social ~root in
+      Ok { has_previous = first > 1; has_next = first < List.length (compendium_social_items items) }
   | CatechismeX (section_index, chapter_index, page, _) ->
       let* doc = load_catechisme_x ~root in
       let* section = find_nth (catechisme_x_sections doc) section_index "Partie introuvable." in
@@ -805,6 +1027,12 @@ let navigate ~root ~names ~bible_translation ~reference direction =
         | None -> Error ("Source simple inconnue: " ^ kind)
       in
       Ok (cfg.prefix ^ string_of_int (match direction with Previous -> first - 1 | Next -> first + 1))
+  | Rael (book_index, section_index, page, _) ->
+      Ok (Printf.sprintf "Rael.%d.%d.%d" book_index section_index (match direction with Previous -> page - 1 | Next -> page + 1))
+  | Compendium (first, _) ->
+      Ok (Printf.sprintf "Cat.Comp.%d" (match direction with Previous -> first - 1 | Next -> first + 1))
+  | CompendiumSocial (first, _) ->
+      Ok (Printf.sprintf "Soc.%d" (match direction with Previous -> first - 1 | Next -> first + 1))
   | CatechismeX (section_index, chapter_index, page, _) ->
       Ok (Printf.sprintf "CatX.%d.%d.%d" section_index chapter_index (match direction with Previous -> page - 1 | Next -> page + 1))
   | CatechismeTrente (part_index, chapter_index, para_index, sentence, _) ->
@@ -875,7 +1103,12 @@ let decode_site_reference_url url =
       else if Str.string_match (Str.regexp "^Vatican .*$") query 0 then Some query
       else if Str.string_match (Str.regexp "^[a-z]+:[0-9A-Za-z.:-]+$") (String.lowercase_ascii query) 0 then Some query
       else if Str.string_match (Str.regexp "^\\(.*\\)-\\([0-9IVXLCDM]+\\):\\(.*\\)$") query 0 then
-        Some (normalize_spaces (Printf.sprintf "%s %s,%s" (Str.matched_group 1 query) (Str.matched_group 2 query) (Str.matched_group 3 query)))
+        let book = Str.matched_group 1 query in
+        let chapter = Str.matched_group 2 query in
+        let verse = Str.matched_group 3 query in
+        Some (normalize_spaces (Printf.sprintf "%s %s,%s" book chapter verse))
       else if Str.string_match (Str.regexp "^\\(.*\\)-\\([0-9IVXLCDM]+\\)$") query 0 then
-        Some (normalize_spaces (Printf.sprintf "%s %s" (Str.matched_group 1 query) (Str.matched_group 2 query)))
+        let book = Str.matched_group 1 query in
+        let chapter = Str.matched_group 2 query in
+        Some (normalize_spaces (Printf.sprintf "%s %s" book chapter))
       else Some query
