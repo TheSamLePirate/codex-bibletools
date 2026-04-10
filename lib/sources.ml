@@ -635,6 +635,48 @@ let parse_ref ~names text =
         Ok (HadithNumber (Str.matched_group 1 lower, Str.matched_group 2 lower))
       else Error ("Référence non prise en charge: " ^ text)
 
+let selector_path_of_reference ~root ~names ~bible_translation:_ ~reference =
+  let* parsed = parse_ref ~names reference in
+  match parsed with
+  | Bible bible_ref ->
+      Ok
+        ( "Bible",
+          [
+            bible_ref.book;
+            string_of_int bible_ref.chapter;
+            string_of_int (Option.value bible_ref.verses.first_verse ~default:1);
+          ] )
+  | Quran (sura, verse, _) -> Ok ("Coran", [ string_of_int sura; string_of_int verse ])
+  | Vatican (dossier, date, article, _) -> Ok ("Vatican", [ dossier; date; string_of_int article ])
+  | Simple (kind, first, _) -> Ok (kind, [ string_of_int first ])
+  | Rael (book_index, section_index, page, _) ->
+      let* doc = load_rael ~root in
+      let* book = find_nth (rael_books doc) book_index "Livre Rael introuvable." in
+      let* section = find_nth (rael_sections book) section_index "Chapitre Rael introuvable." in
+      Ok ("Rael", [ rael_book_title book; rael_section_title section; string_of_int page ])
+  | Compendium (first, _) -> Ok ("Compendium", [ string_of_int first ])
+  | CompendiumSocial (first, _) -> Ok ("CompendiumSocial", [ string_of_int first ])
+  | CatechismeX (section_index, chapter_index, page, _) ->
+      let* doc = load_catechisme_x ~root in
+      let* section = find_nth (catechisme_x_sections doc) section_index "Partie introuvable." in
+      let* chapter = find_nth (section |> member "chapters" |> to_list) chapter_index "Chapitre introuvable." in
+      Ok ("CatechismeX", [ section |> member "title" |> to_string; chapter |> member "title" |> to_string; string_of_int page ])
+  | CatechismeTrente (part_index, chapter_index, para_index, sentence, _) ->
+      let* doc = load_catechisme_trente ~root in
+      let* part = find_nth (catechisme_trente_parts doc) part_index "Partie introuvable." in
+      let* chapter = find_nth (part |> member "chapters" |> to_list) chapter_index "Chapitre introuvable." in
+      let* para = find_nth (chapter |> member "paras" |> to_list) para_index "Paragraphe introuvable." in
+      Ok
+        ( "CatechismeTrente",
+          [
+            part |> member "title" |> to_string;
+            chapter |> member "title" |> to_string;
+            para |> member "title" |> to_string;
+            string_of_int sentence;
+          ] )
+  | HadithBook (author, book, first_number, _) -> Ok ("Hadiths", [ author; book; string_of_int first_number ])
+  | HadithNumber (author, number) -> Ok ("Hadiths2", [ author; number ])
+
 let render_simple ~root kind first last =
   let* cfg =
     match find_simple_config kind with

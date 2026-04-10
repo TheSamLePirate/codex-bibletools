@@ -141,6 +141,10 @@ let () =
   assert_true ((List.hd quran_verse_options).value = "1") "La première sourate doit commencer au verset 1.";
   let* rendered = Sources.render_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Coran:1.1" in
   assert_true (String.equal rendered.source_id "Coran") "Le rendu de Coran:1.1 doit utiliser la source Coran.";
+  let* coran_source, coran_path =
+    Sources.selector_path_of_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Coran:1.1"
+  in
+  assert_true (String.equal coran_source "Coran" && coran_path = [ "1"; "1" ]) "Le chemin inverse Coran doit être résolu.";
   assert_true
     (List.exists (fun (source : Sources.source_descriptor) -> String.equal source.id "CatechismeTrente") sources)
     "Le catalogue doit inclure le catéchisme du concile de Trente.";
@@ -199,6 +203,12 @@ let () =
     Sources.render_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Cat.Comp.1"
   in
   assert_true (String.equal rendered_compendium.source_id "Compendium") "Le rendu Compendium doit utiliser la bonne source.";
+  let* compendium_source, compendium_path =
+    Sources.selector_path_of_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Cat.Comp.1"
+  in
+  assert_true
+    (String.equal compendium_source "Compendium" && compendium_path = [ "1" ])
+    "Le chemin inverse Compendium doit être résolu.";
   let* compendium_social_count =
     Sources.selector_count ~root ~names ~bible_translation:"bible_aelf" ~source:"CompendiumSocial" ~path:[]
   in
@@ -246,6 +256,12 @@ let () =
       ~reference:("muslim:" ^ first_hadith_number)
   in
   assert_true (String.equal rendered_hadith_2.source_id "Hadiths2") "Le rendu Hadiths2 doit utiliser la bonne source.";
+  let* bible_source, bible_path =
+    Sources.selector_path_of_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Jn 1,1"
+  in
+  assert_true
+    (String.equal bible_source "Bible" && bible_path = [ "Jean"; "1"; "1" ])
+    "Le chemin inverse Bible doit être résolu.";
   let* can_count = Sources.selector_count ~root ~names ~bible_translation:"bible_aelf" ~source:"Can" ~path:[] in
   assert_true (Option.value can_count ~default:0 > 1000) "Le code canonique doit exposer un countArticles significatif.";
   let* rendered_can_hole = Sources.render_reference ~root ~names ~bible_translation:"bible_aelf" ~reference:"Can.376" in
@@ -326,6 +342,15 @@ let () =
     (List.mem "TEXT\tEvangile de Jésus-Christ selon saint Jean" chapter_lines)
     "La commande chapter doit renvoyer le titre du livre.";
   let article_urls = list_article_urls root in
+  let droits_article = Article_store.read ~root ~name:"droits-de-l-homme.md" in
+  let* droits_article = droits_article in
+  assert_true
+    (not
+       (try
+          ignore (Str.search_forward (Str.regexp_string "🇻🇦") droits_article 0);
+          true
+        with Not_found -> false))
+    "L'article droits-de-l-homme ne doit pas contenir le drapeau Vatican, source de bug d'affichage UTF-8.";
   let article_references =
     article_urls
     |> List.filter_map (fun (_, url) ->

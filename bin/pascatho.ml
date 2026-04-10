@@ -157,6 +157,14 @@ let render_compile_reference translation_id source path_text =
   let* names = Book_names.load ~root in
   Sources.compile_reference ~root ~names ~bible_translation:translation_id ~source ~path:(split_path path_text)
 
+let render_selector_path translation_id reference_text =
+  let* root = root () in
+  let* names = Book_names.load ~root in
+  let* source, path =
+    Sources.selector_path_of_reference ~root ~names ~bible_translation:translation_id ~reference:reference_text
+  in
+  Ok (String.concat "\n" [ source; String.concat "\t" path ])
+
 let render_source_reference translation_id reference_text =
   let* root = root () in
   let* names = Book_names.load ~root in
@@ -502,6 +510,7 @@ let commands =
     mk_cmd "source-options" "Liste les options d'un niveau de source." Term.(const (fun translation source path -> Stdlib.exit (print_or_fail (render_source_options translation source path))) $ translation $ source_arg $ path_arg);
     mk_cmd "source-count" "Compte d'articles attendu pour un niveau de source." Term.(const (fun translation source path -> Stdlib.exit (print_or_fail (render_source_count translation source path))) $ translation $ source_arg $ path_arg);
     mk_cmd "compile-ref" "Compile une référence depuis un chemin de source." Term.(const (fun translation source path -> Stdlib.exit (print_or_fail (render_compile_reference translation source path))) $ translation $ source_arg $ path_arg);
+    mk_cmd "selector-path" "Résout une référence vers la source et le chemin de sélection." Term.(const (fun translation reference -> Stdlib.exit (print_or_fail (render_selector_path translation reference))) $ translation $ reference);
     mk_cmd "decode-site-ref" "Décode une URL pascatho.ovh en référence interne." Term.(const (fun url -> Stdlib.exit (print_or_fail (render_decode_site_ref url))) $ url_arg);
     mk_cmd "show-ref" "Affiche une référence générique." Term.(const (fun translation reference -> Stdlib.exit (print_or_fail (render_source_reference translation reference))) $ translation $ reference);
     mk_cmd "status-ref" "Statut de navigation d'une référence générique." Term.(const (fun translation reference -> Stdlib.exit (print_or_fail (render_source_status translation reference))) $ translation $ reference);

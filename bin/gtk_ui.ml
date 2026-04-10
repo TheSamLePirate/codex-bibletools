@@ -21,6 +21,9 @@ type t = {
   mutable suppress_history : bool;
   mutable translation : string;
   mutable current_ref : string;
+  mutable current_title : string;
+  mutable current_body : string;
+  mutable displayed_refs : string list;
   mutable source : string;
   mutable source_labels : (string, string list) Hashtbl.t;
   mutable status : string;
@@ -40,8 +43,10 @@ type t = {
   reference_entry : Gtk_bindings.widget;
   back_button : Gtk_bindings.widget;
   chapter_button : Gtk_bindings.widget;
+  append_prev_button : Gtk_bindings.widget;
   prev_button : Gtk_bindings.widget;
   next_button : Gtk_bindings.widget;
+  append_next_button : Gtk_bindings.widget;
 }
 
 let run backend args =
@@ -101,7 +106,17 @@ let plain_markup ui text =
   Article_markdown.render_plain_to_pango_markup ~highlights:ui.highlights text
   |> String.split_on_char '\n' |> String.concat "&#10;"
 
+let reference_summary refs =
+  match refs with
+  | [] -> ""
+  | [ reference ] -> reference
+  | first :: rest ->
+      let last = List.hd (List.rev rest) in
+      Printf.sprintf "%s … %s" first last
+
 let set_output ui ~title ~reference ~body =
+  ui.current_title <- title;
+  ui.current_body <- body;
   Gtk_bindings.label_set_text ui.title_label title;
   Gtk_bindings.label_set_text ui.ref_label reference;
   Gtk_bindings.label_set_markup ui.output_label (plain_markup ui body)
@@ -141,17 +156,23 @@ let select_combo_value ui combo value =
   | None -> ()
 
 let refresh_action_buttons ui =
-  let status_text = run ui.backend [ "status-ref"; "--translation"; translation_of_ui ui; "--reference"; ui.current_ref ] in
-  let has_previous = Option.value (parse_bool_field status_text "prev") ~default:false in
-  let has_next = Option.value (parse_bool_field status_text "next") ~default:false in
+  let first_ref = match ui.displayed_refs with first :: _ -> first | [] -> ui.current_ref in
+  let last_ref = match List.rev ui.displayed_refs with last :: _ -> last | [] -> ui.current_ref in
+  let first_status = run ui.backend [ "status-ref"; "--translation"; translation_of_ui ui; "--reference"; first_ref ] in
+  let last_status = run ui.backend [ "status-ref"; "--translation"; translation_of_ui ui; "--reference"; last_ref ] in
+  let has_previous = Option.value (parse_bool_field first_status "prev") ~default:false in
+  let has_next = Option.value (parse_bool_field last_status "next") ~default:false in
+  Gtk_bindings.widget_set_sensitive ui.append_prev_button has_previous;
   Gtk_bindings.widget_set_sensitive ui.prev_button has_previous;
   Gtk_bindings.widget_set_sensitive ui.next_button has_next;
+  Gtk_bindings.widget_set_sensitive ui.append_next_button has_next;
   Gtk_bindings.widget_set_sensitive ui.chapter_button (Option.is_some (chapter_target ui ui.current_ref))
 
 let apply_rendered ui ~fallback_reference ~status_prefix (reference, title, body) =
   let resolved_reference = if reference = "" then fallback_reference else reference in
   record_view ui (View_history.Reference resolved_reference);
   ui.current_ref <- resolved_reference;
+  ui.displayed_refs <- [ resolved_reference ];
   Gtk_bindings.entry_set_text ui.reference_entry resolved_reference;
   set_output ui ~title ~reference:resolved_reference ~body;
   set_status ui (status_prefix ^ resolved_reference);
@@ -328,9 +349,80 @@ let load_translations ui =
   in
   fill_combo ui ui.translation_combo entries
 
+let sync_selectors_to_reference ui reference =
+  match run ui.backend [ "selector-path"; "--translation"; translation_of_ui ui; "--reference"; reference ] |> parse_lines with
+  | source :: path_line :: _ ->
+      select_combo_value ui ui.source_combo source;
+      clear_levels_from ui 0;
+      refresh_level_visibility ui;
+      load_source_level ui 0;
+      let path = if String.trim path_line = "" then [] else String.split_on_char '\t' path_line in
+      List.iteri
+        (fun index value ->
+          if index < Array.length ui.levels then (
+            let state = ui.levels.(index) in
+            (match state.mode with
+            | Hidden -> ()
+            | Combo -> select_combo_value ui state.combo value
+            | Integer_input _ ->
+                ui.block <- true;
+                Gtk_bindings.entry_set_text state.entry value;
+                ui.block <- false);
+            if index + 1 < Array.length ui.levels then load_source_level ui (index + 1)))
+        path
+  | source :: _ ->
+      select_combo_value ui ui.source_combo source;
+      clear_levels_from ui 0;
+      refresh_level_visibility ui;
+      load_source_level ui 0
+  | [] -> ()
+
 let show_reference ui reference =
   let raw = run ui.backend [ "show-ref"; "--translation"; translation_of_ui ui; "--reference"; reference ] in
-  apply_rendered ui ~fallback_reference:reference ~status_prefix:"Affichage: " (parse_rendered raw)
+  let rendered = parse_rendered raw in
+  let resolved_reference, _, _ = rendered in
+  let resolved_reference = if resolved_reference = "" then reference else resolved_reference in
+  apply_rendered ui ~fallback_reference:reference ~status_prefix:"Affichage: " rendered;
+  sync_selectors_to_reference ui resolved_reference
+
+let fetch_reference ui reference =
+  let raw = run ui.backend [ "show-ref"; "--translation"; translation_of_ui ui; "--reference"; reference ] in
+  let resolved_reference, title, body = parse_rendered raw in
+  let resolved_reference = if resolved_reference = "" then reference else resolved_reference in
+  (resolved_reference, title, body)
+
+let append_reference ui direction =
+  let edge_ref =
+    match direction, ui.displayed_refs with
+    | "previous", first :: _ -> first
+    | "next", [] -> ui.current_ref
+    | "next", refs -> List.hd (List.rev refs)
+    | _, [] -> ui.current_ref
+    | _, first :: _ -> first
+  in
+  let next_raw =
+    run ui.backend
+      [ "navigate-ref"; "--translation"; translation_of_ui ui; "--reference"; edge_ref; "--direction"; direction ]
+  in
+  let next_reference, title, body = parse_rendered next_raw in
+  let next_reference = if next_reference = "" then edge_ref else next_reference in
+  let combined_refs =
+    match direction with
+    | "previous" -> next_reference :: ui.displayed_refs
+    | _ -> ui.displayed_refs @ [ next_reference ]
+  in
+  let combined_body =
+    match direction with
+    | "previous" -> body ^ "\n" ^ ui.current_body
+    | _ -> ui.current_body ^ "\n" ^ body
+  in
+  let combined_title = if ui.current_title <> "" then ui.current_title else title in
+  ui.displayed_refs <- combined_refs;
+  ui.current_ref <- next_reference;
+  set_output ui ~title:combined_title ~reference:(reference_summary combined_refs) ~body:combined_body;
+  sync_selectors_to_reference ui next_reference;
+  set_status ui (Printf.sprintf "Ajout %s: %s" (if String.equal direction "previous" then "avant" else "après") next_reference);
+  refresh_action_buttons ui
 
 let render_article_by_name ui article =
   select_combo_value ui ui.article_combo article;
@@ -340,13 +432,16 @@ let render_article_by_name ui article =
       ~resolve_internal:(resolve_internal_article_url ui) body
   in
   record_view ui (View_history.Article article);
+  ui.displayed_refs <- [];
   Gtk_bindings.label_set_text ui.title_label article;
   Gtk_bindings.label_set_text ui.ref_label "";
   Gtk_bindings.label_set_markup ui.output_label markup;
   set_status ui ("Article: " ^ article);
   Gtk_bindings.widget_set_sensitive ui.chapter_button false;
+  Gtk_bindings.widget_set_sensitive ui.append_prev_button false;
   Gtk_bindings.widget_set_sensitive ui.prev_button false;
-  Gtk_bindings.widget_set_sensitive ui.next_button false
+  Gtk_bindings.widget_set_sensitive ui.next_button false;
+  Gtk_bindings.widget_set_sensitive ui.append_next_button false
 
 let show_article ui =
   match combo_value ui.article_combo with
@@ -383,7 +478,11 @@ let navigate ui direction =
     run ui.backend
       [ "navigate-ref"; "--translation"; translation_of_ui ui; "--reference"; ui.current_ref; "--direction"; direction ]
   in
-  apply_rendered ui ~fallback_reference:ui.current_ref ~status_prefix:"Navigation: " (parse_rendered raw)
+  let rendered = parse_rendered raw in
+  let resolved_reference, _, _ = rendered in
+  let resolved_reference = if resolved_reference = "" then ui.current_ref else resolved_reference in
+  apply_rendered ui ~fallback_reference:ui.current_ref ~status_prefix:"Navigation: " rendered;
+  sync_selectors_to_reference ui resolved_reference
 
 let zoom ui delta =
   ui.text_size <- max 10 (ui.text_size + delta);
@@ -454,8 +553,10 @@ let make_ui backend =
   let scroll = Gtk_bindings.scrolled_window_new () in
   let show_button = Gtk_bindings.button_new "Afficher" in
   let chapter_button = Gtk_bindings.button_new "Chapitre" in
+  let append_prev_button = Gtk_bindings.button_new "+" in
   let prev_button = Gtk_bindings.button_new "Précédent" in
   let next_button = Gtk_bindings.button_new "Suivant" in
+  let append_next_button = Gtk_bindings.button_new "+" in
   let zoom_out_button = Gtk_bindings.button_new "A-" in
   let zoom_in_button = Gtk_bindings.button_new "A+" in
   let goto_button = Gtk_bindings.button_new "Aller" in
@@ -481,6 +582,9 @@ let make_ui backend =
       suppress_history = false;
       translation = "bible_aelf";
       current_ref = "Jn 1,1";
+      current_title = "";
+      current_body = "";
+      displayed_refs = [];
       source = "";
       source_labels = Hashtbl.create 16;
       status = "";
@@ -500,8 +604,10 @@ let make_ui backend =
       reference_entry;
       back_button;
       chapter_button;
+      append_prev_button;
       prev_button;
       next_button;
+      append_next_button;
     }
   in
   let pack_label row text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
@@ -517,7 +623,7 @@ let make_ui backend =
   pack_label row1 "Référence";
   pack_widget row1 reference_entry;
   pack_widget row1 show_button;
-  List.iter (pack_widget row2) [ chapter_button; prev_button; next_button ];
+  List.iter (pack_widget row2) [ chapter_button; append_prev_button; prev_button; next_button; append_next_button ];
   add_source_item "Source" source_combo.widget;
   Array.iter
     (fun level ->
@@ -540,8 +646,10 @@ let make_ui backend =
       match chapter_target ui (Gtk_bindings.entry_get_text reference_entry |> String.trim) with
       | Some reference -> show_reference ui reference
       | None -> set_status ui "Chapitre indisponible pour cette source");
+  Gtk_bindings.connect_clicked append_prev_button (fun () -> append_reference ui "previous");
   Gtk_bindings.connect_clicked prev_button (fun () -> navigate ui "previous");
   Gtk_bindings.connect_clicked next_button (fun () -> navigate ui "next");
+  Gtk_bindings.connect_clicked append_next_button (fun () -> append_reference ui "next");
   Gtk_bindings.connect_clicked zoom_out_button (fun () -> zoom ui (-1));
   Gtk_bindings.connect_clicked zoom_in_button (fun () -> zoom ui 1);
   Gtk_bindings.connect_clicked goto_button (fun () -> goto_source ui);
