@@ -35,6 +35,14 @@ let run_command_capture_lines argv =
       | Unix.WSTOPPED signal -> fail (Printf.sprintf "La commande a été stoppée par le signal %d." signal))
     (fun () -> read_all_lines input [])
 
+let run_command_capture_lines_in_dir dir argv =
+  let previous = Sys.getcwd () in
+  Fun.protect
+    ~finally:(fun () -> Sys.chdir previous)
+    (fun () ->
+      Sys.chdir dir;
+      run_command_capture_lines argv)
+
 let rec find_renderable_path ~root ~names ~translation ~source path =
   let* options = Sources.selector_options ~root ~names ~bible_translation:translation ~source ~path in
   if options = [] then
@@ -333,6 +341,8 @@ let () =
     (Str.string_match (Str.regexp ".*<b>Liberté</b>\n<b>Dignité</b>.*") plain_highlight_markup 0)
     "Les highlights doivent aussi s'appliquer aux textes de sources non markdown.";
   let binary = Filename.concat root "_build/default/bin/pascatho.exe" in
+  let translations_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "translations" ] in
+  assert_true (translations_lines <> []) "Le binaire doit retrouver la racine du projet même hors du dépôt.";
   let chapter_lines =
     run_command_capture_lines
       [ binary; "chapter"; "--translation"; "bible_aelf"; "--reference"; "Jn 1,1" ]
