@@ -221,6 +221,20 @@ static gboolean ctrl_f_callback(gpointer widget, gpointer event, gpointer data)
   CAMLreturnT(gboolean, 0);
 }
 
+static gboolean ctrl_q_callback(gpointer widget, gpointer event, gpointer data)
+{
+  CAMLparam0();
+  CAMLlocal1(unit);
+  GdkEventKey *key = (GdkEventKey *)event;
+  (void)widget;
+  if ((key->state & 4u) != 0u && gdk_keyval_to_lower(key->keyval) == (guint)'q') {
+    unit = Val_unit;
+    caml_callback(((struct callback_data *)data)->closure, unit);
+    CAMLreturnT(gboolean, 1);
+  }
+  CAMLreturnT(gboolean, 0);
+}
+
 static char *sanitize_label_text(const char *text)
 {
   size_t len = strlen(text);
@@ -722,7 +736,9 @@ CAMLprim value caml_gtk_text_view_get_buffer(value widget)
 CAMLprim value caml_gtk_text_buffer_set_text(value buffer, value text)
 {
   CAMLparam2(buffer, text);
-  gtk_text_buffer_set_text(unwrap_ptr(buffer), String_val(text), -1);
+  char *sanitized = sanitize_label_text(String_val(text));
+  gtk_text_buffer_set_text(unwrap_ptr(buffer), sanitized, -1);
+  free(sanitized);
   CAMLreturn(Val_unit);
 }
 
@@ -806,5 +822,16 @@ CAMLprim value caml_gtk_connect_ctrl_f(value widget, value closure)
   data->closure = closure;
   caml_register_global_root(&data->closure);
   g_signal_connect_data(unwrap_ptr(widget), "key-press-event", (GCallback)ctrl_f_callback, data, destroy_callback_data, 0);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_connect_ctrl_q(value widget, value closure)
+{
+  CAMLparam2(widget, closure);
+  struct callback_data *data = malloc(sizeof(struct callback_data));
+  if (data == NULL) caml_failwith("malloc");
+  data->closure = closure;
+  caml_register_global_root(&data->closure);
+  g_signal_connect_data(unwrap_ptr(widget), "key-press-event", (GCallback)ctrl_q_callback, data, destroy_callback_data, 0);
   CAMLreturn(Val_unit);
 }

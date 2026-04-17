@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pascatho
+Comment=Lecture de references bibliques et de corpus textuels
+Exec=pascatho %u
+Terminal=false
+Categories=Education;Office;
+MimeType=x-scheme-handler/pascatho;
+StartupNotify=true

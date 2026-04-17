@@ -1,4 +1,7 @@
 (library
  (name pascatho)
  (wrapped false)
- (libraries cmdliner str unix yojson))
+ (libraries cmdliner str unix yojson)
+ (foreign_stubs
+  (language c)
+  (names process_limits_stubs)))

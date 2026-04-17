@@ -4,6 +4,38 @@ let ( let* ) result f = match result with Ok value -> f value | Error _ as e -> 
 
 let root () = Project_root.find ()
 
+let pascatho_scheme_prefix = "pascatho://"
+
+let url_decode text =
+  let buffer = Buffer.create (String.length text) in
+  let rec loop index =
+    if index >= String.length text then ()
+    else
+      match text.[index] with
+      | '%' when index + 2 < String.length text -> (
+          let hex = String.sub text (index + 1) 2 in
+          match int_of_string_opt ("0x" ^ hex) with
+          | Some value ->
+              Buffer.add_char buffer (Char.chr value);
+              loop (index + 3)
+          | None ->
+              Buffer.add_char buffer text.[index];
+              loop (index + 1))
+      | chr ->
+          Buffer.add_char buffer chr;
+          loop (index + 1)
+  in
+  loop 0;
+  Buffer.contents buffer
+
+let normalize_launch_target text =
+  let trimmed = String.trim text in
+  if trimmed = "" then None
+  else if String.starts_with ~prefix:pascatho_scheme_prefix trimmed then
+    let raw = String.sub trimmed (String.length pascatho_scheme_prefix) (String.length trimmed - String.length pascatho_scheme_prefix) in
+    Some (url_decode raw)
+  else Some trimmed
+
 let load_context translation_id =
   let* root = root () in
   let* names = Book_names.load ~root in
@@ -505,6 +537,41 @@ let name_arg =
 let mk_cmd name doc term =
   Cmd.v (Cmd.info name ~doc) term
 
+let cli_passthrough_args =
+  [
+    "help";
+    "-h";
+    "--help";
+    "-v";
+    "--version";
+    "translations";
+    "source-list";
+    "source-options";
+    "source-count";
+    "compile-ref";
+    "selector-path";
+    "decode-site-ref";
+    "show-ref";
+    "status-ref";
+    "chapter-ref";
+    "navigate-ref";
+    "books";
+    "chapters";
+    "verses";
+    "lookup";
+    "chapter";
+    "navigate";
+    "status";
+    "lucky";
+    "search";
+    "project-root";
+    "articles";
+    "article";
+  ]
+
+let should_delegate_to_cli arg =
+  (String.length arg > 0 && arg.[0] = '-') || List.mem arg cli_passthrough_args
+
 let commands =
   [
     mk_cmd "translations" "Liste les traductions bibliques." Term.(const (fun () -> Stdlib.exit (print_or_fail (render_translations ()))) $ const ());
@@ -533,15 +600,21 @@ let commands =
   ]
 
 let main () =
-  if Array.length Sys.argv = 1 then
-    (match root () with
+  let launch_gui initial_reference =
+    match root () with
     | Ok root ->
         Unix.putenv Project_root.env_var root;
-        let _ = Gtk_ui.launch root in
+        let _ = Gtk_ui.launch root initial_reference in
         0
     | Error message ->
         prerr_endline message;
-        1)
+        1
+  in
+  if Array.length Sys.argv = 1 then launch_gui "Jn 1,1"
+  else if Array.length Sys.argv = 2 && not (should_delegate_to_cli Sys.argv.(1)) then
+    match normalize_launch_target Sys.argv.(1) with
+    | Some reference -> launch_gui reference
+    | None -> launch_gui "Jn 1,1"
   else Cmd.eval (Cmd.group (Cmd.info "pascatho") commands)
 
 let () =

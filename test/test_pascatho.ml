@@ -12,6 +12,12 @@ let assert_contains ~needle haystack message =
     ()
   with Not_found -> fail message
 
+let assert_raises_failure f message =
+  try
+    ignore (f ());
+    fail message
+  with Failure _ -> ()
+
 let rec read_all_lines channel acc =
   match input_line channel with
   | line -> read_all_lines channel (line :: acc)
@@ -103,7 +109,24 @@ let article_reference_supported reference =
             (fun prefix -> string_starts_with ~prefix lower)
             [ "ahmad:"; "bukhari:"; "muslim:"; "abudawud:"; "tirmidhi:"; "nasai:"; "riyadussalihin:"; "mishkat:"; "ibnmajah:"; "adab:" ])))
 
+let with_temp_dir prefix f =
+  let base = Filename.concat (Filename.get_temp_dir_name ()) (prefix ^ "_" ^ string_of_int (Unix.getpid ()) ^ "_" ^ string_of_int (Random.int 1_000_000)) in
+  Unix.mkdir base 0o755;
+  Fun.protect ~finally:(fun () -> ()) (fun () -> f base)
+
 let () =
+  let* initial_address_space_limit = Process_limits.address_space_limit_bytes () in
+  let eight_gib = Int64.mul 8L 1_073_741_824L in
+  let requested_limit =
+    match initial_address_space_limit with
+    | Some current when Int64.compare current eight_gib < 0 -> current
+    | _ -> eight_gib
+  in
+  let* () = Process_limits.set_address_space_limit_bytes ~bytes:requested_limit in
+  let* updated_address_space_limit = Process_limits.address_space_limit_bytes () in
+  assert_true
+    (match updated_address_space_limit with Some current -> Int64.equal current requested_limit | None -> false)
+    "La limite d'espace d'adressage doit pouvoir être définie explicitement.";
   let history =
     View_history.empty
     |> fun history -> View_history.visit history (View_history.Reference "Jn 1,1")
@@ -123,10 +146,115 @@ let () =
   assert_true
     (String.equal (BibleTools.handle_romans "^Livre \\([IVX]+\\)$" "Livre XIV") "Livre 14")
     "Le helper de conversion des chiffres romains doit remplacer les groupes capturés.";
+  assert_true
+    (String.equal
+       (BibleTools.simplify_book_label "Première lettre de saint Paul Apôtre aux Corinthiens")
+       "1 lettre de saint Paul Apôtre aux Corinthiens")
+    "La simplification des libellés doit réécrire le début des titres bibliques.";
+  assert_true
+    (String.equal (BibleTools.simplify_book_label "Livre de la Genèse") "la Genèse")
+    "La simplification des libellés doit supprimer les préfixes de type `Livre de`.";
   let* names_without_js = Book_names.load ~root:"/tmp/does-not-need-bibletools-js" in
   assert_true
     (Book_names.canonical_title names_without_js "Jn" = Some "Jean")
     "Les noms bibliques ne doivent plus dépendre du fichier bibleTools.js.";
+  let* () = with_temp_dir "textprocess" (fun temp_root ->
+      let datas_dir = Filename.concat temp_root "datas" in
+      Unix.mkdir datas_dir 0o755;
+      let artifact =
+        `Assoc
+          [
+            ( "sources",
+              `List
+                [
+                  `Assoc
+                    [
+                      ("id", `String "demo");
+                      ("label", `String "Demo");
+                      ( "documents",
+                        `List
+                          [
+                            `Assoc
+                              [
+                                ("id", `String "demo:1");
+                                ("title", `String "Doc 1");
+                                ("reference", `String "Demo 1");
+                                ("text", `String "Grace et paix. La paix demeure.");
+                                ("paragraphs", `List [ `String "Grace et paix. La paix demeure." ]);
+                                ("sentences", `List [ `String "Grace et paix"; `String "La paix demeure" ]);
+                                ("tokens", `List [ `String "grace"; `String "paix"; `String "paix"; `String "demeure" ]);
+                              ];
+                            `Assoc
+                              [
+                                ("id", `String "demo:2");
+                                ("title", `String "Doc 2");
+                                ("reference", `String "Demo 2");
+                                ("text", `String "Parabole et justice. Justice profonde.");
+                                ("paragraphs", `List [ `String "Parabole et justice. Justice profonde." ]);
+                                ("sentences", `List [ `String "Parabole et justice"; `String "Justice profonde" ]);
+                                ("tokens", `List [ `String "parabole"; `String "justice"; `String "justice"; `String "profonde" ]);
+                              ];
+                          ] );
+                    ];
+                ] );
+            ( "reference",
+              `List
+                [
+                  `Assoc
+                    [
+                      ("id", `String "ref:1");
+                      ("title", `String "Hugo 1");
+                      ("reference", `String "Hugo 1");
+                      ("text", `String "Paix et mer.");
+                      ("paragraphs", `List [ `String "Paix et mer." ]);
+                      ("sentences", `List [ `String "Paix et mer" ]);
+                      ("tokens", `List [ `String "paix"; `String "mer" ]);
+                    ];
+                ] );
+          ]
+      in
+      Yojson.Safe.to_file (Text_process.artifact_path ~root:temp_root) artifact;
+      assert_raises_failure
+        (fun () -> Text_process.ensure_preprocessed ~root:(Filename.concat temp_root "missing"))
+        "Text_process.ensure_preprocessed doit échouer explicitement sans artefact.";
+      let* text_corpus = Text_process.load ~root:temp_root ~source:"demo" in
+      let text_sources = Text_process.sources text_corpus in
+      assert_true
+        (List.exists (fun (source : Text_process.source_info) -> String.equal source.id "demo" && source.document_count = 2) text_sources)
+        "Le corpus texte chargé doit exposer les sources prétraitées.";
+      let lexical_hits = Text_process.lexical_search text_corpus ~source:"demo" ~query:"paix" in
+      assert_true
+        (match lexical_hits with first :: _ -> String.equal first.reference "Demo 1" | [] -> false)
+        "La recherche lexicale doit retrouver le document le plus pertinent.";
+      let semantic_hits = Text_process.semantic_search text_corpus ~source:"demo" ~query:"justice" in
+      assert_true (semantic_hits <> []) "La recherche sémantique doit produire au moins un résultat.";
+      let specific_terms = Text_process.specific_terms text_corpus ~source:"demo" in
+      assert_true
+        (List.exists (fun (term : Text_process.term_score) -> String.equal term.term "parabole") specific_terms)
+        "L'extraction de vocabulaire spécifique doit produire les termes saillants.";
+      assert_true
+        (List.exists (fun (term : Text_process.term_score) -> term.frequency >= 1 && term.score <> 0.0) specific_terms)
+        "Le vocabulaire spécifique doit exposer des scores et fréquences utilisables.";
+      let concepts = Text_process.central_concepts text_corpus ~source:"demo" in
+      assert_true (concepts <> []) "Les concepts centraux doivent être calculés.";
+      assert_true
+        (List.exists (fun (concept : Text_process.concept) -> concept.neighbours <> [] && concept.score > 0.0) concepts)
+        "Les concepts centraux doivent inclure des voisins et un score positif.";
+      let themes = Text_process.themes text_corpus ~source:"demo" in
+      assert_true (themes <> []) "La hiérarchie thématique doit être calculée.";
+      assert_true
+        (List.exists (fun (theme : Text_process.theme) -> theme.keywords <> [] && theme.document_ids <> []) themes)
+        "Les thèmes doivent contenir des mots-clés et des documents.";
+      let summary = Text_process.summarize text_corpus ~source:"demo" ~question:"justice" in
+      assert_true (summary.passages <> []) "Le résumé par question doit renvoyer des passages source.";
+      Random.init 0;
+      let generated = Text_process.generate_from_word text_corpus ~source:"demo" ~word:"paix" in
+      assert_true (generated <> []) "La génération à partir d'un mot doit produire au moins une phrase.";
+      assert_true
+        (List.for_all (fun sentence -> String.trim sentence <> "Grace et paix" && String.trim sentence <> "La paix demeure") generated)
+        "La génération ne doit pas se contenter de recopier les phrases source.";
+      Ok ())
+  in
   let* root = Project_root.find () in
   let* names = Book_names.load ~root in
   let* parsed = Bible_reference.parse ~names "Jn 1,1" in
@@ -467,6 +595,10 @@ let () =
   let binary = Filename.concat root "_build/default/bin/pascatho.exe" in
   let translations_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "translations" ] in
   assert_true (translations_lines <> []) "Le binaire doit retrouver la racine du projet même hors du dépôt.";
+  let help_lines = run_command_capture_lines [ binary; "--help=plain" ] in
+  assert_true
+    (List.exists (fun line -> String.equal line "COMMANDS") help_lines)
+    "Un argument unique correspondant à une option Cmdliner ne doit pas ouvrir l'interface graphique.";
   Unix.putenv Project_root.env_var root;
   let project_root_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "project-root" ] in
   assert_true

@@ -173,3 +173,37 @@ let handle_romans pattern text =
       in
     replace_group 1 text
   else text
+
+
+let drop_case_insensitive_prefix ~prefix text =
+  let prefix_length = String.length prefix in
+  if String.length text < prefix_length then text
+  else
+    let candidate = String.sub text 0 prefix_length |> String.lowercase_ascii in
+    if String.equal candidate (String.lowercase_ascii prefix) then
+      String.sub text prefix_length (String.length text - prefix_length) |> String.trim
+    else text
+
+let replace_case_insensitive_start ~prefix ~replacement text =
+  let prefix_length = String.length prefix in
+  if String.length text < prefix_length then text
+  else
+    let candidate = String.sub text 0 prefix_length |> String.lowercase_ascii in
+    if String.equal candidate (String.lowercase_ascii prefix) then
+      replacement ^ String.sub text prefix_length (String.length text - prefix_length)
+    else text
+
+let simplify_book_label text =
+  let lower = String.lowercase_ascii text in
+  if String.equal lower "lettre de saint paul apôtre à tite" then "tite"
+  else if String.equal lower "lettre de saint jacques apôtre" then "Jacques"
+  else
+    text
+    |> replace_case_insensitive_start ~prefix:"première" ~replacement:"1"
+    |> replace_case_insensitive_start ~prefix:"deuxième" ~replacement:"2"
+    |> drop_case_insensitive_prefix ~prefix:"Lettre de Saint Paul apôtre aux "
+    |> drop_case_insensitive_prefix ~prefix:"lettre de saint paul apôtre à"
+    |> drop_case_insensitive_prefix ~prefix:"Livre d'"
+    |> drop_case_insensitive_prefix ~prefix:"Livre de "
+    |> drop_case_insensitive_prefix ~prefix:"Livre des "
+    |> drop_case_insensitive_prefix ~prefix:"Evangile de Jésus-Christ selon Saint"

@@ -5,3 +5,4 @@ val roman_pattern : string
 val roman_or_decimal_pattern : string
 val rm2num : string -> int
 val handle_romans : string -> string -> string
+val simplify_book_label : string -> string

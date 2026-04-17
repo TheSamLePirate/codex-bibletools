@@ -80,11 +80,14 @@ let compact_text max_chars text =
   if String.length text <= max_chars then text
   else String.sub text 0 (max_chars - 1) ^ "…"
 
-let fill_combo ?(max_chars = 10) ui combo entries =
+let fill_combo ?(max_chars = 25) ui combo entries =
   ui.block <- true;
   combo.entries <- entries;
   Gtk_bindings.combo_box_text_remove_all combo.widget;
-  List.iter (fun (_value, label) -> Gtk_bindings.combo_box_text_append_text combo.widget (compact_text max_chars label)) entries;
+  List.iter
+    (fun (_value, label) ->
+      label |> BibleTools.simplify_book_label |> compact_text max_chars |> Gtk_bindings.combo_box_text_append_text combo.widget)
+    entries;
   if entries = [] then Gtk_bindings.combo_box_set_active combo.widget (-1)
   else Gtk_bindings.combo_box_set_active combo.widget 0;
   ui.block <- false
@@ -563,7 +566,7 @@ let load_highlights project_root =
         loop [])
   else []
 
-let make_ui root names =
+let make_ui root names initial_reference =
   Gtk_bindings.init ();
   Random.self_init ();
   let background_path = Filename.concat root "bg.jpeg" in
@@ -643,7 +646,7 @@ let make_ui root names =
       block = false;
       suppress_history = false;
       translation = "bible_aelf";
-      current_ref = "Jn 1,1";
+      current_ref = initial_reference;
       current_title = "";
       current_body = "";
       current_references = None;
@@ -753,6 +756,7 @@ let make_ui root names =
       hide_search ui;
       show_reference ui (Gtk_bindings.entry_get_text reference_entry));
   Gtk_bindings.connect_ctrl_f window (fun () -> open_search ui);
+  Gtk_bindings.connect_ctrl_q window (fun () -> Gtk_bindings.main_quit ());
   Gtk_bindings.connect_activate_link output_label (fun uri ->
       hide_search ui;
       if String.length uri >= 4 && String.sub uri 0 4 = "ref:" then
@@ -804,10 +808,10 @@ let make_ui root names =
   update_back_button ui;
   ui
 
-let launch root =
+let launch root initial_reference =
   match Book_names.load ~root with
   | Error message -> Error message
   | Ok names ->
-      let _ui = make_ui root names in
+      let _ui = make_ui root names initial_reference in
       Gtk_bindings.main ();
       Ok ()

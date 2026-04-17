@@ -64,3 +64,4 @@ external connect_changed : widget -> (unit -> unit) -> unit = "caml_gtk_connect_
 external connect_activate : widget -> (unit -> unit) -> unit = "caml_gtk_connect_activate"
 external connect_activate_link : widget -> (string -> unit) -> unit = "caml_gtk_connect_activate_link"
 external connect_ctrl_f : widget -> (unit -> unit) -> unit = "caml_gtk_connect_ctrl_f"
+external connect_ctrl_q : widget -> (unit -> unit) -> unit = "caml_gtk_connect_ctrl_q"
