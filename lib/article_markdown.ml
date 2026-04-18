@@ -4,35 +4,7 @@ let escape_markup text =
 let escape_attribute text =
   text |> escape_markup |> String.split_on_char '"' |> String.concat "&quot;" |> String.split_on_char '\'' |> String.concat "&apos;"
 
-let sanitize_text text =
-  let buffer = Buffer.create (String.length text) in
-  let rec loop index =
-    if index >= String.length text then ()
-    else
-      let byte = Char.code text.[index] in
-      if byte < 32 then (
-        if text.[index] = '\n' || text.[index] = '\r' || text.[index] = '\t' then Buffer.add_char buffer text.[index];
-        loop (index + 1))
-      else if index + 1 < String.length text && byte = 0xC2 && Char.code text.[index + 1] = 0xA0 then (
-        Buffer.add_char buffer ' ';
-        loop (index + 2))
-      else if index + 1 < String.length text && byte = 0xC2 && Char.code text.[index + 1] = 0xAD then (
-        loop (index + 2))
-      else if index + 2 < String.length text && byte = 0xE2 && Char.code text.[index + 1] = 0x80
-              && List.mem (Char.code text.[index + 2]) [ 0x8B; 0xA8; 0xA9 ] then
-        loop (index + 3)
-      else if index + 2 < String.length text && byte = 0xE2 && Char.code text.[index + 1] = 0x81
-              && Char.code text.[index + 2] = 0xA0 then
-        loop (index + 3)
-      else if index + 2 < String.length text && byte = 0xEF && Char.code text.[index + 1] = 0xBB
-              && Char.code text.[index + 2] = 0xBF then
-        loop (index + 3)
-      else (
-        Buffer.add_char buffer text.[index];
-        loop (index + 1))
-  in
-  loop 0;
-  Buffer.contents buffer
+let sanitize_text = Text_sanitize.sanitize_text
 
 let apply_highlights highlights text =
   List.fold_left

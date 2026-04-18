@@ -63,10 +63,6 @@ let open_uri uri =
       let argv = [| "xdg-open"; uri |] in
       ignore (Unix.create_process "xdg-open" argv dev_null dev_null dev_null))
 
-let is_url_terminator = function
-  | ' ' | '\n' | '\r' | '\t' -> true
-  | _ -> false
-
 let append_markup_escaped buffer = function
   | '&' -> Buffer.add_string buffer "&amp;"
   | '<' -> Buffer.add_string buffer "&lt;"
@@ -76,40 +72,30 @@ let append_markup_escaped buffer = function
   | '\n' -> Buffer.add_string buffer "&#10;"
   | chr -> Buffer.add_char buffer chr
 
-let markup_of_text text =
-  let prefix = "pascatho://" in
-  let prefix_length = String.length prefix in
-  let buffer = Buffer.create (String.length text * 2) in
-  let rec loop index =
-    if index >= String.length text then ()
-    else if index + prefix_length <= String.length text && String.sub text index prefix_length = prefix then
-      let end_index =
-        let rec find_end cursor =
-          if cursor >= String.length text || is_url_terminator text.[cursor] then cursor else find_end (cursor + 1)
-        in
-        find_end (index + prefix_length)
-      in
-      let uri = String.sub text index (end_index - index) in
-      Buffer.add_string buffer (Printf.sprintf "<a href=\"%s\">%s</a>" uri uri);
-      loop end_index
-    else (
-      append_markup_escaped buffer text.[index];
-      loop (index + 1))
-  in
-  loop 0;
+let escape_markup_text text =
+  let sanitized = Article_markdown.sanitize_text text in
+  let buffer = Buffer.create (String.length sanitized * 2) in
+  String.iter (append_markup_escaped buffer) sanitized;
   Buffer.contents buffer
+
+let markup_heading text = "<b>" ^ escape_markup_text text ^ "</b>"
+
+let markup_paragraphs items = String.concat "&#10;&#10;" items
+
+let reference_link_markup reference =
+  Printf.sprintf "<a href=\"%s\">%s</a>" (pascatho_url reference) (escape_markup_text reference)
 
 let format_hits title hits =
   let body =
-    if hits = [] then "Aucun résultat."
+    if hits = [] then escape_markup_text "Aucun résultat."
     else
       hits
       |> List.mapi (fun index (hit : Text_process.search_hit) ->
-             Printf.sprintf "%d. %s [%s]\nscore=%.3f\nouvrir=%s\n%s" (index + 1) hit.title hit.reference hit.score
-               (pascatho_url hit.reference) hit.excerpt)
-      |> String.concat "\n\n"
+             Printf.sprintf "%d. %s [%s]&#10;score=%.3f&#10;%s" (index + 1) (escape_markup_text hit.title)
+               (reference_link_markup hit.reference) hit.score (escape_markup_text hit.excerpt))
+      |> markup_paragraphs
   in
-  title ^ "\n\n" ^ body
+  markup_paragraphs [ markup_heading title; body ]
 
 let rec flatten_themes level themes =
   themes
@@ -155,7 +141,7 @@ let operation_label = function
 
 let selected_operation ui = combo_value ui.operation_combo |> Option.map operation_of_string
 
-let set_output ui text = Gtk_bindings.label_set_markup ui.output_label (markup_of_text text)
+let set_output ui markup = Gtk_bindings.label_set_markup ui.output_label markup
 
 let set_status ui text = Gtk_bindings.label_set_text ui.status_label text
 
@@ -182,40 +168,53 @@ let operation_markup ui source operation query =
   | Search_lexical -> format_hits (operation_label operation) (Text_process.lexical_search ui.corpus ~source ~query)
   | Search_semantic -> format_hits (operation_label operation) (Text_process.semantic_search ui.corpus ~source ~query)
   | Specific_terms ->
-      Text_process.specific_terms ui.corpus ~source
-      |> List.mapi (fun index (term : Text_process.term_score) ->
-             Printf.sprintf "%d. %s\nscore=%.3f\nfréquence=%d%s" (index + 1) term.term term.score term.frequency
-               (match term.reference_frequency with
-               | None -> ""
-               | Some value -> Printf.sprintf "\nfréquence de référence=%d" value))
-      |> String.concat "\n\n"
-      |> fun text -> operation_label operation ^ "\n\n" ^ if text = "" then "Aucun résultat." else text
+      let body =
+        Text_process.specific_terms ui.corpus ~source
+        |> List.mapi (fun index (term : Text_process.term_score) ->
+               let reference_frequency =
+                 match term.reference_frequency with
+                 | None -> ""
+                 | Some value -> Printf.sprintf "&#10;fréquence de référence=%d" value
+               in
+               Printf.sprintf "%d. %s&#10;score=%.3f&#10;fréquence=%d%s" (index + 1) (escape_markup_text term.term) term.score
+                 term.frequency reference_frequency)
+        |> markup_paragraphs
+      in
+      markup_paragraphs [ markup_heading (operation_label operation); if body = "" then escape_markup_text "Aucun résultat." else body ]
   | Central_concepts ->
-      Text_process.central_concepts ui.corpus ~source
-      |> List.mapi (fun index (concept : Text_process.concept) ->
-             Printf.sprintf "%d. %s\nscore=%.3f\nvoisins=%s" (index + 1) concept.term concept.score
-               (if concept.neighbours = [] then "aucun" else String.concat ", " concept.neighbours))
-      |> String.concat "\n\n"
-      |> fun text -> operation_label operation ^ "\n\n" ^ if text = "" then "Aucun résultat." else text
+      let body =
+        Text_process.central_concepts ui.corpus ~source
+        |> List.mapi (fun index (concept : Text_process.concept) ->
+               let neighbours =
+                 if concept.neighbours = [] then "aucun" else escape_markup_text (String.concat ", " concept.neighbours)
+               in
+               Printf.sprintf "%d. %s&#10;score=%.3f&#10;voisins=%s" (index + 1) (escape_markup_text concept.term) concept.score neighbours)
+        |> markup_paragraphs
+      in
+      markup_paragraphs [ markup_heading (operation_label operation); if body = "" then escape_markup_text "Aucun résultat." else body ]
   | Themes ->
-      Text_process.themes ui.corpus ~source |> flatten_themes 0 |> String.concat "\n\n"
-      |> fun text -> operation_label operation ^ "\n\n" ^ if text = "" then "Aucun thème." else text
+      let text = Text_process.themes ui.corpus ~source |> flatten_themes 0 |> String.concat "\n\n" in
+      markup_paragraphs [ markup_heading (operation_label operation); if text = "" then escape_markup_text "Aucun thème." else escape_markup_text text ]
   | Summary ->
       let summary = Text_process.summarize ui.corpus ~source ~question:query in
-      String.concat "\n\n"
+      let passages =
+        if summary.passages = [] then escape_markup_text "Aucun passage."
+        else
+          summary.passages
+          |> List.map (fun (reference, title, excerpt) ->
+                 Printf.sprintf "- [%s] %s&#10;%s" (reference_link_markup reference) (escape_markup_text title) (escape_markup_text excerpt))
+          |> String.concat "&#10;"
+      in
+      markup_paragraphs
         [
-          operation_label operation;
-          "Réponse courte:\n" ^ summary.short_answer;
-          "Réponse longue:\n" ^ summary.long_answer;
-          "Passages:\n"
-          ^
-          (summary.passages
-          |> List.map (fun (reference, title, excerpt) -> Printf.sprintf "- %s | %s | %s | %s" reference title (pascatho_url reference) excerpt)
-          |> String.concat "\n");
+          markup_heading (operation_label operation);
+          markup_heading "Réponse courte" ^ "&#10;" ^ escape_markup_text summary.short_answer;
+          markup_heading "Réponse longue" ^ "&#10;" ^ escape_markup_text summary.long_answer;
+          markup_heading "Passages" ^ "&#10;" ^ passages;
         ]
   | Generate ->
-      Text_process.generate_from_word ui.corpus ~source ~word:query |> String.concat "\n\n"
-      |> fun text -> operation_label operation ^ "\n\n" ^ if text = "" then "Aucune génération." else text
+      let text = Text_process.generate_from_word ui.corpus ~source ~word:query |> String.concat "\n\n" in
+      markup_paragraphs [ markup_heading (operation_label operation); if text = "" then escape_markup_text "Aucune génération." else escape_markup_text text ]
 
 let run ui =
   update_query_visibility ui;
@@ -223,7 +222,7 @@ let run ui =
   | Some source, Some operation ->
       let query = Gtk_bindings.entry_get_text ui.query_entry |> String.trim in
       if operation_requires_query operation && query = "" then (
-        set_output ui (operation_label operation ^ "\n\nSaisie requise.");
+        set_output ui (markup_paragraphs [ markup_heading (operation_label operation); escape_markup_text "Saisie requise." ]);
         set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation ^ " | Saisie requise."))
       else (
         let operation_id =

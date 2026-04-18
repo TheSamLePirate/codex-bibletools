@@ -16,29 +16,35 @@ let available_sources_help () =
       "Sources disponibles: " ^ sources ^ "."
 
 let main source =
-  Random.self_init ();
-  match Process_limits.set_address_space_limit_bytes ~bytes:memory_limit_bytes with
-  | Error message ->
-      prerr_endline message;
-      exit 1
-  | Ok () -> (
-      log_text_tools "Limite mémoire appliquée: 4 Gio.";
-      match Project_root.find () with
+  match source with
+  | None ->
+      prerr_endline "L'option --source est obligatoire.";
+      prerr_endline (available_sources_help ());
+      1
+  | Some source -> (
+      Random.self_init ();
+      match Process_limits.set_address_space_limit_bytes ~bytes:memory_limit_bytes with
       | Error message ->
           prerr_endline message;
-          exit 1
-      | Ok root ->
-          Text_process.ensure_preprocessed ~root;
-          log_text_tools ("Chargement du corpus prétraité pour la source " ^ source ^ "...");
-          Text_tools_ui.launch root source;
-          ())
+          1
+      | Ok () -> (
+          log_text_tools "Limite mémoire appliquée: 4 Gio.";
+          match Project_root.find () with
+          | Error message ->
+              prerr_endline message;
+              1
+          | Ok root ->
+              Text_process.ensure_preprocessed ~root;
+              log_text_tools ("Chargement du corpus prétraité pour la source " ^ source ^ "...");
+              Text_tools_ui.launch root source;
+              0))
 
 let cmd =
   let info = Cmd.info "textTools" ~doc:"Fenêtre de traitement lexical et thématique" in
   let source =
     let doc = "Identifiant de la source à charger. " ^ available_sources_help () in
-    Arg.(required & opt (some string) None & info [ "source" ] ~docv:"SOURCE" ~doc)
+    Arg.(value & opt (some string) None & info [ "source" ] ~docv:"SOURCE" ~doc)
   in
   Cmd.v info Term.(const main $ source)
 
-let () = exit (Cmd.eval cmd)
+let () = exit (Cmd.eval' cmd)

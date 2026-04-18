@@ -272,6 +272,9 @@ let () =
       let generated = Text_process.generate_from_word text_corpus ~source:"demo" ~word:"paix" in
       assert_true (generated <> []) "La génération à partir d'un mot doit produire au moins une phrase.";
       assert_true
+        (List.length (List.sort_uniq String.compare generated) >= 2)
+        "La génération doit produire au moins deux phrases distinctes pour alimenter la relance aléatoire.";
+      assert_true
         (List.for_all (fun sentence -> String.trim sentence <> "Grace et paix" && String.trim sentence <> "La paix demeure") generated)
         "La génération ne doit pas se contenter de recopier les phrases source.";
       Ok ())
@@ -598,6 +601,10 @@ let () =
   assert_true
     (String.equal sanitized_markup "ABC DEFGHIJKL")
     "Le rendu source doit neutraliser les caractères problématiques sans casser le texte.";
+  let invalid_utf8 = Article_markdown.sanitize_text "Femme retint eaux nué revien \128\153ardeur.\194\160»" in
+  assert_true
+    (String.equal invalid_utf8 "Femme retint eaux nué revien ??ardeur. »")
+    "La sanitisation doit rendre affichables les octets UTF-8 invalides sans casser le reste du texte.";
   let source_quran_markup =
     Article_markdown.render_source_to_pango_markup "Voir aussi Sourate II, 255-257."
   in
@@ -614,6 +621,20 @@ let () =
   in
   assert_true (Option.value rendered_vatican.references ~default:"" <> "") "Le rendu Vatican doit transporter les notes de bas de page.";
   let binary = Filename.concat root "_build/default/bin/pascatho.exe" in
+  let text_tools_binary = Filename.concat root "_build/default/bin/textTools.exe" in
+  let text_tools_command = Printf.sprintf "%s 2>&1" (Filename.quote text_tools_binary) in
+  let text_tools_no_source = Unix.open_process_in text_tools_command in
+  let text_tools_lines =
+    Fun.protect
+      ~finally:(fun () -> ignore (Unix.close_process_in text_tools_no_source))
+      (fun () -> read_all_lines text_tools_no_source [])
+  in
+  assert_true
+    (List.exists (fun line -> String.equal line "L'option --source est obligatoire.") text_tools_lines)
+    "textTools doit signaler explicitement que --source manque.";
+  assert_true
+    (List.exists (fun line -> string_starts_with ~prefix:"Sources disponibles: " line) text_tools_lines)
+    "textTools doit lister les sources disponibles quand --source est absent.";
   let translations_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "translations" ] in
   assert_true (translations_lines <> []) "Le binaire doit retrouver la racine du projet même hors du dépôt.";
   let help_lines = run_command_capture_lines [ binary; "--help=plain" ] in

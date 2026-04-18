@@ -598,23 +598,37 @@ let build_generated_phrase analyzed_source token =
   |> String.capitalize_ascii
   |> fun phrase -> phrase ^ "."
 
+let collect_distinct_phrases ~count ~attempts ~is_valid build =
+  let rec loop attempts_left acc =
+    if List.length acc >= count || attempts_left <= 0 then List.rev acc
+    else
+      let phrase = build () |> String.trim in
+      if (not (is_valid phrase)) || List.mem phrase acc then loop (attempts_left - 1) acc else loop (attempts_left - 1) (phrase :: acc)
+  in
+  loop attempts []
+
 let generate_internal (analyzed_source : analyzed_source) word =
   let token = normalize_token word in
+  let trivial_phrase = String.capitalize_ascii token ^ "." in
+  let is_valid phrase = phrase <> "" && not (String.equal phrase trivial_phrase) in
   let synthetic =
-    List.init 3 (fun _ -> build_generated_phrase analyzed_source token)
-    |> List.filter (fun phrase -> String.trim phrase <> "" && not (String.equal phrase (String.capitalize_ascii token ^ ".")))
-    |> List.sort_uniq String.compare
+    collect_distinct_phrases ~count:2 ~attempts:16 ~is_valid (fun () -> build_generated_phrase analyzed_source token)
   in
-  match synthetic with
-  | _ :: _ -> synthetic
-  | [] ->
-      let fallback =
-        analyzed_source.docs
-        |> List.filter_map (fun document ->
-               if List.mem token document.tokens then Some (String.capitalize_ascii (String.concat " " (take_random_items 4 document.tokens)) ^ ".") else None)
-        |> List.sort_uniq String.compare
-      in
-      (match fallback with [] -> [ String.capitalize_ascii word ^ "." ] | values -> take_random_items 3 values)
+  if List.length synthetic >= 2 then synthetic
+  else
+    let fallback_candidates =
+      analyzed_source.docs
+      |> List.filter_map (fun document ->
+             if List.mem token document.tokens then Some (String.capitalize_ascii (String.concat " " (take_random_items 4 document.tokens)) ^ ".") else None)
+      |> List.filter is_valid |> List.sort_uniq String.compare
+    in
+    let missing = max 0 (2 - List.length synthetic) in
+    let fallback =
+      fallback_candidates |> List.filter (fun phrase -> not (List.mem phrase synthetic)) |> take_random_items missing
+    in
+    match synthetic @ fallback with
+    | [] -> [ String.capitalize_ascii word ^ "." ]
+    | values -> values
 
 let source_depth_hint source_id =
   match source_id with
