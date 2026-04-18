@@ -604,8 +604,7 @@ let main () =
     match root () with
     | Ok root ->
         Unix.putenv Project_root.env_var root;
-        let _ = Gtk_ui.launch root initial_reference in
-        0
+        (match Gtk_ui.launch root initial_reference Sys.argv with Ok () -> 0 | Error message -> prerr_endline message; 1)
     | Error message ->
         prerr_endline message;
         1

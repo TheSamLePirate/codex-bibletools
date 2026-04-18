@@ -566,8 +566,39 @@ let load_highlights project_root =
         loop [])
   else []
 
+let pascatho_scheme_prefix = "pascatho://"
+
+let url_decode text =
+  let buffer = Buffer.create (String.length text) in
+  let rec loop index =
+    if index >= String.length text then ()
+    else
+      match text.[index] with
+      | '%' when index + 2 < String.length text -> (
+          let hex = String.sub text (index + 1) 2 in
+          match int_of_string_opt ("0x" ^ hex) with
+          | Some value ->
+              Buffer.add_char buffer (Char.chr value);
+              loop (index + 3)
+          | None ->
+              Buffer.add_char buffer text.[index];
+              loop (index + 1))
+      | chr ->
+          Buffer.add_char buffer chr;
+          loop (index + 1)
+  in
+  loop 0;
+  Buffer.contents buffer
+
+let normalize_launch_target text =
+  let trimmed = String.trim text in
+  if trimmed = "" then None
+  else if String.starts_with ~prefix:pascatho_scheme_prefix trimmed then
+    let raw = String.sub trimmed (String.length pascatho_scheme_prefix) (String.length trimmed - String.length pascatho_scheme_prefix) in
+    Some (url_decode raw)
+  else Some trimmed
+
 let make_ui root names initial_reference =
-  Gtk_bindings.init ();
   Random.self_init ();
   let background_path = Filename.concat root "bg.jpeg" in
   let logo_path = Filename.concat root "logo.jpeg" in
@@ -808,10 +839,34 @@ let make_ui root names initial_reference =
   update_back_button ui;
   ui
 
-let launch root initial_reference =
+let launch root initial_reference argv =
+  let application_id = "ovh.pascatho.Pascatho" in
   match Book_names.load ~root with
   | Error message -> Error message
   | Ok names ->
-      let _ui = make_ui root names initial_reference in
-      Gtk_bindings.main ();
-      Ok ()
+      let ui_ref = ref None in
+      let ensure_ui reference =
+        match !ui_ref with
+        | Some ui -> (ui, false)
+        | None ->
+            let ui = make_ui root names reference in
+            ui_ref := Some ui;
+            (ui, true)
+      in
+      let present_target reference =
+        let ui, created = ensure_ui reference in
+        if not created then (
+          hide_search ui;
+          show_reference ui reference);
+        Gtk_bindings.window_present ui.window
+      in
+      let on_activate () =
+        let ui, _created = ensure_ui initial_reference in
+        Gtk_bindings.window_present ui.window
+      in
+      let on_command_line argument =
+        let reference = Option.value (normalize_launch_target argument) ~default:initial_reference in
+        present_target reference
+      in
+      let status = Gtk_bindings.application_run ~app_id:application_id ~argv ~on_activate ~on_command_line in
+      if status = 0 then Ok () else Error (Printf.sprintf "GTK application exited with status %d" status)

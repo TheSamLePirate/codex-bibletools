@@ -149,8 +149,13 @@ let () =
   assert_true
     (String.equal
        (BibleTools.simplify_book_label "Première lettre de saint Paul Apôtre aux Corinthiens")
-       "1 lettre de saint Paul Apôtre aux Corinthiens")
-    "La simplification des libellés doit réécrire le début des titres bibliques.";
+       "1 Corinthiens")
+    "La simplification des libellés doit préserver les raccourcis des lettres de saint Paul.";
+  assert_true
+    (String.equal
+       (BibleTools.simplify_book_label "Deuxième lettre de saint Paul Apôtre à Timothée")
+       "2 Timothée")
+    "La simplification des libellés doit aussi préserver les raccourcis vers Timothée.";
   assert_true
     (String.equal (BibleTools.simplify_book_label "Livre de la Genèse") "la Genèse")
     "La simplification des libellés doit supprimer les préfixes de type `Livre de`.";
@@ -213,10 +218,26 @@ let () =
                 ] );
           ]
       in
+      assert_true
+        (String.equal (Text_process.artifact_path ~root:temp_root) (Filename.concat temp_root "datas/textprocess_manifest.json"))
+        "Text_process.artifact_path doit pointer vers le manifeste attendu.";
+      assert_true
+        (String.equal Text_process.preprocess_command "dune exec processSources")
+        "Text_process.preprocess_command doit exposer la commande de régénération.";
+      assert_true
+        (try
+           ignore (Text_process.preprocess_and_save ~root:(Filename.concat temp_root "missing"));
+           false
+         with Unix.Unix_error _ -> true)
+        "Text_process.preprocess_and_save doit échouer explicitement sur une racine invalide.";
       Yojson.Safe.to_file (Text_process.artifact_path ~root:temp_root) artifact;
       assert_raises_failure
         (fun () -> Text_process.ensure_preprocessed ~root:(Filename.concat temp_root "missing"))
         "Text_process.ensure_preprocessed doit échouer explicitement sans artefact.";
+      Text_process.ensure_preprocessed ~root:temp_root;
+      assert_true
+        (match Text_process.load ~root:temp_root ~source:"missing" with Error message -> String.trim message <> "" | Ok _ -> false)
+        "Text_process.load doit échouer explicitement sur une source inconnue.";
       let* text_corpus = Text_process.load ~root:temp_root ~source:"demo" in
       let text_sources = Text_process.sources text_corpus in
       assert_true

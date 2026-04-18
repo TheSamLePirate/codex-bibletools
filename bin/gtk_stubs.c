@@ -13,6 +13,9 @@ typedef void GtkTextBuffer;
 typedef void GtkClipboard;
 typedef void GdkDisplay;
 typedef void GtkAdjustment;
+typedef void GtkApplication;
+typedef void GApplication;
+typedef void GApplicationCommandLine;
 typedef void PangoFontDescription;
 typedef char gchar;
 typedef unsigned int guint;
@@ -28,10 +31,17 @@ typedef gboolean (*GSourceFunc)(gpointer);
 extern void gtk_init(int *argc, char ***argv);
 extern void gtk_main(void);
 extern void gtk_main_quit(void);
+extern gpointer gtk_application_new(const gchar *application_id, int flags);
+extern GtkWidget *gtk_application_window_new(gpointer application);
+extern int g_application_run(gpointer application, int argc, char **argv);
+extern void g_application_quit(gpointer application);
+extern gchar **g_application_command_line_get_arguments(gpointer cmdline, int *argc);
+extern void g_strfreev(gchar **str_array);
 extern GtkWidget *gtk_window_new(int window_type);
 extern void gtk_window_set_title(gpointer window, const gchar *title);
 extern void gtk_window_set_default_size(gpointer window, int width, int height);
 extern void gtk_window_set_icon(gpointer window, gpointer icon);
+extern void gtk_window_present(gpointer window);
 extern void gtk_widget_set_app_paintable(gpointer widget, gboolean app_paintable);
 extern gboolean gtk_widget_grab_focus(gpointer widget);
 extern int gtk_widget_get_allocated_width(gpointer widget);
@@ -106,6 +116,7 @@ extern void cairo_stroke(cairo_t *cr);
 #define GTK_ORIENTATION_HORIZONTAL 0
 #define GTK_ORIENTATION_VERTICAL 1
 #define GTK_SELECTION_NONE 0
+#define G_APPLICATION_HANDLES_COMMAND_LINE (1 << 3)
 
 static value wrap_ptr(void *ptr)
 {
@@ -118,6 +129,8 @@ static void *unwrap_ptr(value v)
 {
   return *((void **)Data_abstract_val(v));
 }
+
+static gpointer current_application = NULL;
 
 struct callback_data {
   value closure;
@@ -205,6 +218,43 @@ static value connect_string_signal(value widget, const char *signal_name, value 
   caml_register_global_root(&data->closure);
   g_signal_connect_data(unwrap_ptr(widget), signal_name, (GCallback)activate_link_callback, data, destroy_string_callback_data, 0);
   CAMLreturn(Val_unit);
+}
+
+struct app_callback_data {
+  value activate_closure;
+  value command_line_closure;
+};
+
+static void destroy_app_callback_data(gpointer data, gpointer closure)
+{
+  (void)closure;
+  struct app_callback_data *cb = (struct app_callback_data *)data;
+  caml_remove_global_root(&cb->activate_closure);
+  caml_remove_global_root(&cb->command_line_closure);
+  free(cb);
+}
+
+static void application_activate_callback(gpointer app, gpointer data)
+{
+  CAMLparam0();
+  current_application = app;
+  caml_callback(((struct app_callback_data *)data)->activate_closure, Val_unit);
+  CAMLreturn0;
+}
+
+static int application_command_line_callback(gpointer app, gpointer cmdline, gpointer data)
+{
+  CAMLparam0();
+  CAMLlocal1(argument);
+  int argc = 0;
+  gchar **argv = g_application_command_line_get_arguments(cmdline, &argc);
+  const char *target = "";
+  current_application = app;
+  if (argc > 1 && argv != NULL && argv[1] != NULL) target = argv[1];
+  argument = caml_copy_string(target);
+  caml_callback(((struct app_callback_data *)data)->command_line_closure, argument);
+  if (argv != NULL) g_strfreev(argv);
+  CAMLreturnT(int, 0);
 }
 
 static gboolean ctrl_f_callback(gpointer widget, gpointer event, gpointer data)
@@ -391,13 +441,48 @@ CAMLprim value caml_gtk_main(value unit)
 CAMLprim value caml_gtk_main_quit(value unit)
 {
   CAMLparam1(unit);
-  gtk_main_quit();
+  if (current_application != NULL) g_application_quit(current_application);
+  else gtk_main_quit();
   CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_application_run(value app_id, value argv, value activate_closure, value command_line_closure)
+{
+  CAMLparam4(app_id, argv, activate_closure, command_line_closure);
+  CAMLlocal1(result);
+  mlsize_t argc = Wosize_val(argv);
+  char **native_argv = calloc((size_t)argc + 1u, sizeof(char *));
+  struct app_callback_data *data = malloc(sizeof(struct app_callback_data));
+  gpointer app;
+  int status;
+  mlsize_t i;
+  if (native_argv == NULL || data == NULL) caml_failwith("malloc");
+  for (i = 0; i < argc; i++) {
+    native_argv[i] = strdup(String_val(Field(argv, i)));
+    if (native_argv[i] == NULL) caml_failwith("strdup");
+  }
+  data->activate_closure = activate_closure;
+  data->command_line_closure = command_line_closure;
+  caml_register_global_root(&data->activate_closure);
+  caml_register_global_root(&data->command_line_closure);
+  app = gtk_application_new(String_val(app_id), G_APPLICATION_HANDLES_COMMAND_LINE);
+  current_application = app;
+  g_signal_connect_data(app, "activate", (GCallback)application_activate_callback, data, NULL, 0);
+  g_signal_connect_data(app, "command-line", (GCallback)application_command_line_callback, data, NULL, 0);
+  status = g_application_run(app, (int)argc, native_argv);
+  destroy_app_callback_data(data, NULL);
+  g_object_unref(app);
+  current_application = NULL;
+  for (i = 0; i < argc; i++) free(native_argv[i]);
+  free(native_argv);
+  result = Val_int(status);
+  CAMLreturn(result);
 }
 
 CAMLprim value caml_gtk_window_new(value unit)
 {
   CAMLparam1(unit);
+  if (current_application != NULL) CAMLreturn(wrap_ptr(gtk_application_window_new(current_application)));
   CAMLreturn(wrap_ptr(gtk_window_new(GTK_WINDOW_TOPLEVEL)));
 }
 
@@ -451,6 +536,13 @@ CAMLprim value caml_gtk_window_enable_cross_background(value widget, value path)
   gtk_widget_set_app_paintable(background->widget, 1);
   g_signal_connect_data(background->widget, "draw", (GCallback)background_draw_callback, background, destroy_background_data, 0);
   background->timer_id = g_timeout_add(16, background_tick, background);
+  CAMLreturn(Val_unit);
+}
+
+CAMLprim value caml_gtk_window_present(value widget)
+{
+  CAMLparam1(widget);
+  gtk_window_present(unwrap_ptr(widget));
   CAMLreturn(Val_unit);
 }
 

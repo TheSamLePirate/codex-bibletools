@@ -20,8 +20,7 @@ type t = {
   query_label : Gtk_bindings.widget;
   query_entry : Gtk_bindings.widget;
   reroll_button : Gtk_bindings.widget;
-  output_view : Gtk_bindings.widget;
-  output_buffer : Gtk_bindings.text_buffer;
+  output_label : Gtk_bindings.widget;
   status_label : Gtk_bindings.widget;
 }
 
@@ -55,6 +54,50 @@ let pascatho_url_encode text =
   Buffer.contents buffer
 
 let pascatho_url reference = "pascatho://" ^ pascatho_url_encode reference
+
+let open_uri uri =
+  let dev_null = Unix.openfile "/dev/null" [ Unix.O_RDWR ] 0 in
+  Fun.protect
+    ~finally:(fun () -> Unix.close dev_null)
+    (fun () ->
+      let argv = [| "xdg-open"; uri |] in
+      ignore (Unix.create_process "xdg-open" argv dev_null dev_null dev_null))
+
+let is_url_terminator = function
+  | ' ' | '\n' | '\r' | '\t' -> true
+  | _ -> false
+
+let append_markup_escaped buffer = function
+  | '&' -> Buffer.add_string buffer "&amp;"
+  | '<' -> Buffer.add_string buffer "&lt;"
+  | '>' -> Buffer.add_string buffer "&gt;"
+  | '"' -> Buffer.add_string buffer "&quot;"
+  | '\'' -> Buffer.add_string buffer "&#39;"
+  | '\n' -> Buffer.add_string buffer "&#10;"
+  | chr -> Buffer.add_char buffer chr
+
+let markup_of_text text =
+  let prefix = "pascatho://" in
+  let prefix_length = String.length prefix in
+  let buffer = Buffer.create (String.length text * 2) in
+  let rec loop index =
+    if index >= String.length text then ()
+    else if index + prefix_length <= String.length text && String.sub text index prefix_length = prefix then
+      let end_index =
+        let rec find_end cursor =
+          if cursor >= String.length text || is_url_terminator text.[cursor] then cursor else find_end (cursor + 1)
+        in
+        find_end (index + prefix_length)
+      in
+      let uri = String.sub text index (end_index - index) in
+      Buffer.add_string buffer (Printf.sprintf "<a href=\"%s\">%s</a>" uri uri);
+      loop end_index
+    else (
+      append_markup_escaped buffer text.[index];
+      loop (index + 1))
+  in
+  loop 0;
+  Buffer.contents buffer
 
 let format_hits title hits =
   let body =
@@ -112,7 +155,7 @@ let operation_label = function
 
 let selected_operation ui = combo_value ui.operation_combo |> Option.map operation_of_string
 
-let set_output ui text = Gtk_bindings.text_buffer_set_text ui.output_buffer text
+let set_output ui text = Gtk_bindings.label_set_markup ui.output_label (markup_of_text text)
 
 let set_status ui text = Gtk_bindings.label_set_text ui.status_label text
 
@@ -209,8 +252,7 @@ let launch root source_id =
   let window = Gtk_bindings.window_new () in
   let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:6 in
   let row = Gtk_bindings.box_new ~vertical:false ~spacing:6 in
-  let output_view = Gtk_bindings.text_view_new () in
-  let output_buffer = Gtk_bindings.text_view_get_buffer output_view in
+  let output_label = Gtk_bindings.label_new "" in
   let status_label = create_label "" in
   let source_combo = { widget = Gtk_bindings.combo_box_text_new (); entries = [] } in
   let operation_combo = { widget = Gtk_bindings.combo_box_text_new (); entries = [] } in
@@ -222,11 +264,10 @@ let launch root source_id =
   Gtk_bindings.window_set_title window "text tools";
   Gtk_bindings.window_set_default_size window ~width:1000 ~height:760;
   Gtk_bindings.scrolled_window_set_policy scroll ~h:1 ~v:1;
-  Gtk_bindings.text_view_set_wrap_mode output_view 2;
-  Gtk_bindings.text_view_set_editable output_view false;
-  Gtk_bindings.text_view_set_cursor_visible output_view false;
-  Gtk_bindings.container_add scroll output_view;
-  let ui = { corpus; window; source_combo; operation_combo; query_label; query_entry; reroll_button; output_view; output_buffer; status_label } in
+  Gtk_bindings.label_set_line_wrap output_label true;
+  Gtk_bindings.label_set_selectable output_label true;
+  Gtk_bindings.container_add scroll output_label;
+  let ui = { corpus; window; source_combo; operation_combo; query_label; query_entry; reroll_button; output_label; status_label } in
   let pack_label text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
   let pack_widget widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
   pack_label "Source";
@@ -257,6 +298,8 @@ let launch root source_id =
   Gtk_bindings.connect_clicked run_button (fun () -> run ui);
   Gtk_bindings.connect_clicked reroll_button (fun () -> run ui);
   Gtk_bindings.connect_activate query_entry (fun () -> run ui);
+  Gtk_bindings.connect_activate_link output_label (fun uri ->
+      try open_uri uri with Unix.Unix_error (_error, _fn, _arg) -> set_status ui ("Impossible d'ouvrir le lien: " ^ uri));
   Gtk_bindings.connect_changed source_combo.widget (fun () -> run ui);
   Gtk_bindings.connect_changed operation_combo.widget (fun () -> run ui);
   Gtk_bindings.widget_show_all window;

@@ -199,6 +199,15 @@ let simplify_book_label text =
   else if String.equal lower "lettre de saint jacques apôtre" then "Jacques"
   else
     text
+    |> replace_case_insensitive_start ~prefix:"première lettre de saint paul apôtre aux " ~replacement:"1 "
+    |> replace_case_insensitive_start ~prefix:"deuxième lettre de saint paul apôtre aux " ~replacement:"2 "
+    |> replace_case_insensitive_start ~prefix:"première lettre de saint paul apôtre à " ~replacement:"1 "
+    |> replace_case_insensitive_start ~prefix:"deuxième lettre de saint paul apôtre à " ~replacement:"2 "
+    |> replace_case_insensitive_start ~prefix:"première lettre de saint pierre apôtre" ~replacement:"1 Pierre"
+    |> replace_case_insensitive_start ~prefix:"deuxième lettre de saint pierre apôtre" ~replacement:"2 Pierre"
+    |> replace_case_insensitive_start ~prefix:"première lettre de saint jean" ~replacement:"1-jean"
+    |> replace_case_insensitive_start ~prefix:"deuxième lettre de saint jean" ~replacement:"2-jean"
+    |> replace_case_insensitive_start ~prefix:"troisième lettre de saint jean" ~replacement:"3-jean"
     |> replace_case_insensitive_start ~prefix:"première" ~replacement:"1"
     |> replace_case_insensitive_start ~prefix:"deuxième" ~replacement:"2"
     |> drop_case_insensitive_prefix ~prefix:"Lettre de Saint Paul apôtre aux "

@@ -4,12 +4,14 @@ type text_buffer
 external init : unit -> unit = "caml_gtk_init"
 external main : unit -> unit = "caml_gtk_main"
 external main_quit : unit -> unit = "caml_gtk_main_quit"
+external application_run : app_id:string -> argv:string array -> on_activate:(unit -> unit) -> on_command_line:(string -> unit) -> int = "caml_gtk_application_run"
 
 external window_new : unit -> widget = "caml_gtk_window_new"
 external window_set_title : widget -> string -> unit = "caml_gtk_window_set_title"
 external window_set_default_size : widget -> width:int -> height:int -> unit = "caml_gtk_window_set_default_size_bc" "caml_gtk_window_set_default_size"
 external window_set_icon_from_file : widget -> string -> unit = "caml_gtk_window_set_icon_from_file"
 external window_enable_cross_background : widget -> string -> unit = "caml_gtk_window_enable_cross_background"
+external window_present : widget -> unit = "caml_gtk_window_present"
 external widget_grab_focus : widget -> unit = "caml_gtk_widget_grab_focus"
 
 external box_new : vertical:bool -> spacing:int -> widget = "caml_gtk_box_new_bc" "caml_gtk_box_new"

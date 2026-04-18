@@ -6,4 +6,5 @@ Exec=pascatho %u
 Terminal=false
 Categories=Education;Office;
 MimeType=x-scheme-handler/pascatho;
+DBusActivatable=true
 StartupNotify=true

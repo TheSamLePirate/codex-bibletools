@@ -4,12 +4,14 @@ type text_buffer
 val init : unit -> unit
 val main : unit -> unit
 val main_quit : unit -> unit
+val application_run : app_id:string -> argv:string array -> on_activate:(unit -> unit) -> on_command_line:(string -> unit) -> int
 
 val window_new : unit -> widget
 val window_set_title : widget -> string -> unit
 val window_set_default_size : widget -> width:int -> height:int -> unit
 val window_set_icon_from_file : widget -> string -> unit
 val window_enable_cross_background : widget -> string -> unit
+val window_present : widget -> unit
 val widget_grab_focus : widget -> unit
 
 val box_new : vertical:bool -> spacing:int -> widget
