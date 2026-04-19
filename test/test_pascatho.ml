@@ -201,6 +201,61 @@ let () =
                               ];
                           ] );
                     ];
+                  `Assoc
+                    [
+                      ("id", `String "filtered");
+                      ("label", `String "Filtered");
+                      ( "documents",
+                        `List
+                          [
+                            `Assoc
+                              [
+                                ("id", `String "filtered:1");
+                                ("title", `String "Filtered 1");
+                                ("reference", `String "Filtered 1");
+                                ("text", `String "J'ai 12 pains et il a été chez eux, mais ne dit jamais cela.");
+                              ];
+                          ] );
+                    ];
+                  `Assoc
+                    [
+                      ("id", `String "generator");
+                      ("label", `String "Generator");
+                      ( "documents",
+                        `List
+                          [
+                            `Assoc
+                              [
+                                ("id", `String "generator:1");
+                                ("title", `String "Generator 1");
+                                ("reference", `String "Generator 1");
+                                ("text", `String "Avec pain et eau. Sans pain et feu.");
+                              ];
+                          ] );
+                    ];
+                  `Assoc
+                    [
+                      ("id", `String "Coran");
+                      ("label", `String "Coran");
+                      ( "documents",
+                        `List
+                          [
+                            `Assoc
+                              [
+                                ("id", `String "coran:1");
+                                ("title", `String "Coran 1");
+                                ("reference", `String "Coran:1.1");
+                                ("text", `String "Miséricorde paix.");
+                              ];
+                            `Assoc
+                              [
+                                ("id", `String "coran:2");
+                                ("title", `String "Coran 2");
+                                ("reference", `String "Coran:2.1");
+                                ("text", `String "Combat fer.");
+                              ];
+                          ] );
+                    ];
                 ] );
             ( "reference",
               `List
@@ -256,6 +311,24 @@ let () =
       assert_true
         (List.exists (fun (term : Text_process.term_score) -> term.frequency >= 1 && term.score <> 0.0) specific_terms)
         "Le vocabulaire spécifique doit exposer des scores et fréquences utilisables.";
+      let* filtered_corpus = Text_process.load ~root:temp_root ~source:"filtered" in
+      let filtered_terms = Text_process.specific_terms filtered_corpus ~source:"filtered" |> List.map (fun (term : Text_process.term_score) -> term.term) in
+      assert_true (List.exists (String.equal "pain") filtered_terms) "Le tokenizer doit conserver les mots de contenu utiles.";
+      assert_true
+        (not (List.exists (fun term -> List.mem term [ "12"; "j'ai"; "ai"; "il"; "a"; "été"; "ete"; "chez"; "dit"; "jamais" ]) filtered_terms))
+        "Le tokenizer doit ignorer les chiffres, clitiques et mots-outils demandés.";
+      let* project_root = Project_root.find () in
+      let* project_names = Book_names.load ~root:project_root in
+      let* quran_corpus = Text_process.load ~root:temp_root ~source:"Coran" in
+      let* quran_terms =
+        Text_process.specific_terms_for_path quran_corpus ~root:temp_root ~names:project_names ~bible_translation:"bible_aelf" ~source:"Coran" ~path:[ "1" ]
+      in
+      assert_true
+        (List.exists (fun (term : Text_process.term_score) -> String.equal term.term "miséricorde") quran_terms)
+        "Le vocabulaire spécifique hiérarchique doit isoler les termes saillants d'une sourate.";
+      assert_true
+        (not (List.exists (fun (term : Text_process.term_score) -> String.equal term.term "combat") quran_terms))
+        "Le vocabulaire spécifique hiérarchique ne doit pas remonter les termes du reste du corpus comme spécifiques à la sous-hiérarchie.";
       let concepts = Text_process.central_concepts text_corpus ~source:"demo" in
       assert_true (concepts <> []) "Les concepts centraux doivent être calculés.";
       assert_true
@@ -268,6 +341,31 @@ let () =
         "Les thèmes doivent contenir des mots-clés et des documents.";
       let summary = Text_process.summarize text_corpus ~source:"demo" ~question:"justice" in
       assert_true (summary.passages <> []) "Le résumé par question doit renvoyer des passages source.";
+      let* generator_corpus = Text_process.load ~root:temp_root ~source:"generator" in
+      Random.init 0;
+      let generator_generated = Text_process.generate_from_word generator_corpus ~source:"generator" ~word:"pain" in
+      assert_true
+        (List.exists
+           (fun sentence ->
+             let lower = String.lowercase_ascii sentence in
+             try
+               ignore (Str.search_forward (Str.regexp_string " pain ") (" " ^ lower) 0);
+               not (String.starts_with ~prefix:"pain " lower)
+             with Not_found -> false)
+           generator_generated)
+        "La génération doit pouvoir placer le mot pivot au milieu de la phrase.";
+      assert_true
+        (List.exists
+           (fun sentence ->
+             let lower = String.lowercase_ascii sentence in
+             List.exists (fun needle ->
+               try
+                 ignore (Str.search_forward (Str.regexp_string needle) lower 0);
+                 true
+               with Not_found -> false)
+               [ "avec pain"; "sans pain"; "pain et" ])
+           generator_generated)
+        "La génération doit conserver un contexte lexical autour du mot pivot.";
       Random.init 0;
       let generated = Text_process.generate_from_word text_corpus ~source:"demo" ~word:"paix" in
       assert_true (generated <> []) "La génération à partir d'un mot doit produire au moins une phrase.";

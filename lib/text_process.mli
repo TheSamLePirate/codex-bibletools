@@ -78,6 +78,13 @@ val semantic_search : t -> source:string -> query:string -> search_hit list
 (** Extrait le vocabulaire spécifique de la source par rapport au corpus de référence. *)
 val specific_terms : t -> source:string -> term_score list
 
+(** Extrait le vocabulaire spécifique d'une sous-hiérarchie de la source chargée.
+    [path] est interprété comme un préfixe de chemin de sélection source.
+    Pour la Bible, la comparaison se fait contre le corpus de référence ;
+    pour les autres sources, elle se fait contre le reste de la source chargée. *)
+val specific_terms_for_path :
+  t -> root:string -> names:Book_names.t -> bible_translation:string -> source:string -> path:string list -> (term_score list, string) result
+
 (** Calcule les concepts centraux d'une source à partir du graphe de cooccurrences. *)
 val central_concepts : t -> source:string -> concept list
 

@@ -65,6 +65,7 @@ type analyzed_document = {
   count_map : (string, int) Hashtbl.t;
   length : int;
   tokens : string list;
+  generation_tokens : string list;
 }
 
 type analyzed_source = {
@@ -74,6 +75,9 @@ type analyzed_source = {
   total_tokens : int;
   average_length : float;
   collocations : (string, (string * int) list) Hashtbl.t;
+  generation_collocations : (string, (string * int) list) Hashtbl.t;
+  generation_predecessors : (string, (string * int) list) Hashtbl.t;
+  generation_starts : (string, (string * int) list) Hashtbl.t;
   mutable specific_terms_cache : term_score list option;
   mutable central_concepts_cache : concept list option;
   mutable themes_cache : theme list option;
@@ -115,14 +119,19 @@ let source_artifact_path ~root ~source_id =
 
 let stopwords =
   [
-    "a"; "au"; "aux"; "avec"; "ce"; "ces"; "dans"; "de"; "des"; "du"; "elle"; "en"; "et"; "eux"; "il"; "je";
-    "la"; "le"; "les"; "leur"; "lui"; "ma"; "mais"; "me"; "meme"; "mes"; "moi"; "mon"; "ne"; "nos"; "notre";
-    "nous"; "on"; "ou"; "par"; "pas"; "pour"; "qu"; "que"; "qui"; "sa"; "se"; "ses"; "son"; "sur"; "ta"; "te";
-    "tes"; "toi"; "ton"; "tu"; "un"; "une"; "vos"; "votre"; "vous"; "c"; "d"; "l"; "y"; "est"; "sont"; "etre";
-    "avait"; "ont"; "plus"; "comme"; "sans"; "donc"; "or"; "ni"; "car"; "cet"; "cette"; "ces"; "leurs"; "leurs";
-    "ainsi"; "si"; "ou"; "où"; "fait"; "faites"; "été"; "etre"; "été"; "être";
+    "a"; "ai"; "aie"; "aient"; "aies"; "ainsi"; "as"; "au"; "aura"; "aurai"; "auraient"; "aurais"; "aurait"; "auras";
+    "aurez"; "auriez"; "aurions"; "aurons"; "auront"; "aux"; "avait"; "avaient"; "avais"; "avec"; "avez"; "aviez";
+    "avions"; "avoir"; "avons"; "c"; "car"; "ce"; "ces"; "cet"; "cette"; "chez"; "comme"; "d"; "dans"; "de"; "des";
+    "dire"; "dis"; "disaient"; "disait"; "disant"; "disent"; "dit"; "dites"; "donc"; "du"; "elle"; "elles"; "en";
+    "es"; "est"; "et"; "ete"; "etes"; "être"; "etre"; "étaient"; "étais"; "était"; "étant"; "étiez"; "étions"; "été";
+    "eux"; "fait"; "faites"; "il"; "ils"; "j"; "jamais"; "je"; "la"; "le"; "les"; "leur"; "leurs"; "lui"; "m";
+    "ma"; "mais"; "me"; "meme"; "mes"; "moi"; "mon"; "n"; "ne"; "ni"; "nos"; "notre"; "nous"; "on"; "ont";
+    "or"; "ou"; "où"; "par"; "pas"; "plus"; "pour"; "q"; "qu"; "que"; "qui"; "rien"; "s"; "sa"; "sans"; "se";
+    "sera"; "serai"; "seraient"; "serais"; "serait"; "seras"; "serez"; "seriez"; "serions"; "serons"; "seront"; "ses";
+    "si"; "soi"; "soient"; "sois"; "soit"; "sommes"; "son"; "sont"; "soyez"; "soyons"; "sur"; "t"; "ta"; "te";
+    "tes"; "toi"; "ton"; "tu"; "un"; "une"; "vos"; "votre"; "vous"; "y"; "à";
   ]
-  |> List.fold_left (fun set word -> Hashtbl.replace set word (); set) (Hashtbl.create 128)
+  |> List.fold_left (fun set word -> Hashtbl.replace set word (); set) (Hashtbl.create 256)
 
 let starts_with ~prefix text =
   let prefix_len = String.length prefix in
@@ -130,6 +139,8 @@ let starts_with ~prefix text =
 
 let sentence_split_regexp = Str.regexp "[.!?;\n\r]+"
 let token_regexp = Str.regexp "[A-Za-zÀ-ÿ0-9']+"
+
+let generation_token_regexp = Str.regexp "[A-Za-zÀ-ÿ']+"
 
 let normalize_spaces text = Str.global_replace (Str.regexp "[ \t]+") " " text |> String.trim
 
@@ -144,10 +155,28 @@ let contains_substring text needle =
   in
   loop 0
 
+let strip_french_prefix token =
+  [ "qu'"; "l'"; "j'"; "c'"; "s'"; "n'"; "d'"; "t'"; "m'" ]
+  |> List.find_map (fun prefix ->
+         if String.length token > String.length prefix && starts_with ~prefix token then
+           Some (String.sub token (String.length prefix) (String.length token - String.length prefix))
+         else None)
+  |> Option.value ~default:token
+
+let contains_digit token =
+  let rec loop index =
+    index < String.length token
+    &&
+    match token.[index] with
+    | '0' .. '9' -> true
+    | _ -> loop (index + 1)
+  in
+  loop 0
+
 let normalize_token token =
-  let token = String.lowercase_ascii token in
+  let token = String.lowercase_ascii token |> strip_french_prefix in
   let token_len = String.length token in
-  if token_len > 5 && starts_with ~prefix:"l'" token then String.sub token 2 (token_len - 2)
+  if contains_digit token then ""
   else if token_len > 5 && String.ends_with ~suffix:"es" token then String.sub token 0 (token_len - 2)
   else if token_len > 4 && String.ends_with ~suffix:"s" token then String.sub token 0 (token_len - 1)
   else if token_len > 5 && String.ends_with ~suffix:"ent" token then String.sub token 0 (token_len - 3)
@@ -160,6 +189,17 @@ let tokenize text =
       let token = Str.matched_string text |> normalize_token in
       let next = Str.match_end () in
       if token = "" || Hashtbl.mem stopwords token then loop next acc else loop next (token :: acc)
+    with Not_found -> List.rev acc
+  in
+  loop 0 []
+
+let generation_tokenize text =
+  let rec loop start acc =
+    try
+      let _ = Str.search_forward generation_token_regexp text start in
+      let token = Str.matched_string text |> String.lowercase_ascii in
+      let next = Str.match_end () in
+      if token = "" then loop next acc else loop next (token :: acc)
     with Not_found -> List.rev acc
   in
   loop 0 []
@@ -258,6 +298,12 @@ let build_document ~id ~title ~reference text =
   let counts = count_tokens tokens |> counts_to_list in
   { id; title; reference; text = normalized_text; tokens; counts }
 
+let increment_assoc_table table key value =
+  let previous = Option.value (Hashtbl.find_opt table key) ~default:[] in
+  let count = Option.value (List.assoc_opt value previous) ~default:0 + 1 in
+  let filtered = List.remove_assoc value previous in
+  Hashtbl.replace table key ((value, count) :: filtered)
+
 let analyze_documents documents =
   let df = Hashtbl.create 512 in
   let total_tokens = ref 0 in
@@ -270,28 +316,42 @@ let analyze_documents documents =
             Hashtbl.replace count_map term count;
             Hashtbl.replace df term (Option.value (Hashtbl.find_opt df term) ~default:0 + 1))
           document.counts;
+        let generation_tokens = generation_tokenize document.text in
         total_tokens := !total_tokens + List.length document.tokens;
-        { stored = document; count_map; length = List.length document.tokens; tokens = document.tokens })
+        { stored = document; count_map; length = List.length document.tokens; tokens = document.tokens; generation_tokens })
       documents
   in
   let collocations = Hashtbl.create 256 in
+  let generation_collocations = Hashtbl.create 256 in
+  let generation_predecessors = Hashtbl.create 256 in
+  let generation_starts = Hashtbl.create 128 in
   List.iter
     (fun (document : analyzed_document) ->
       let rec loop = function
         | a :: (b :: _ as rest) ->
-            let previous = Option.value (Hashtbl.find_opt collocations a) ~default:[] in
-            let count = Option.value (List.assoc_opt b previous) ~default:0 + 1 in
-            let filtered = List.remove_assoc b previous in
-            Hashtbl.replace collocations a ((b, count) :: filtered);
+            increment_assoc_table collocations a b;
             loop rest
         | _ -> ()
       in
-      loop document.tokens)
+      loop document.tokens;
+      let rec generation_loop = function
+        | current :: (next :: _ as rest) ->
+            increment_assoc_table generation_collocations current next;
+            increment_assoc_table generation_predecessors next current;
+            let normalized_current = normalize_token current in
+            if normalized_current <> "" then increment_assoc_table generation_starts normalized_current current;
+            generation_loop rest
+        | [ current ] ->
+            let normalized_current = normalize_token current in
+            if normalized_current <> "" then increment_assoc_table generation_starts normalized_current current
+        | [] -> ()
+      in
+      generation_loop document.generation_tokens)
     docs;
   let average_length =
     if docs = [] then 0.0 else float_of_int !total_tokens /. float_of_int (List.length docs)
   in
-  (docs, df, !total_tokens, average_length, collocations)
+  (docs, df, !total_tokens, average_length, collocations, generation_collocations, generation_predecessors, generation_starts)
 
 let excerpt_from_text text query_tokens =
   let sentences = split_sentences text in
@@ -389,6 +449,50 @@ let specific_terms_internal corpus (analyzed_source : analyzed_source) : term_sc
            })
   in
   terms |> List.sort (fun (a : term_score) (b : term_score) -> Float.compare b.score a.score) |> List.filteri (fun index _ -> index < 30)
+
+let doc_frequency documents =
+  let table = Hashtbl.create 256 in
+  List.iter
+    (fun (document : analyzed_document) ->
+      Hashtbl.iter (fun term _count -> Hashtbl.replace table term (Option.value (Hashtbl.find_opt table term) ~default:0 + 1)) document.count_map)
+    documents;
+  table
+
+let total_tokens_of_documents documents = List.fold_left (fun acc (document : analyzed_document) -> acc + document.length) 0 documents
+
+let specific_terms_against_reference ~df ~documents ~reference_tf ~reference_total_tokens =
+  let target_freq = group_term_frequencies documents in
+  let doc_count = max 1 (List.length documents) in
+  let target_total_tokens = total_tokens_of_documents documents in
+  let terms : term_score list =
+    target_freq |> Hashtbl.to_seq |> List.of_seq
+    |> List.map (fun (term, frequency) ->
+           let doc_frequency = Option.value (Hashtbl.find_opt df term) ~default:1 in
+           let idf = term_idf df doc_count term in
+           let specificity =
+             if reference_total_tokens = 0 then float_of_int frequency *. idf
+             else
+               log_ratio ~target_count:frequency ~target_total:target_total_tokens
+                 ~reference_count:(reference_term_frequency reference_tf term) ~reference_total:reference_total_tokens
+           in
+           {
+             term;
+             score = specificity +. (float_of_int doc_frequency *. 0.01);
+             frequency;
+             reference_frequency = if reference_total_tokens = 0 then None else Some (reference_term_frequency reference_tf term);
+           })
+  in
+  terms |> List.sort (fun (a : term_score) (b : term_score) -> Float.compare b.score a.score) |> List.filteri (fun index _ -> index < 30)
+
+let path_is_prefix prefix path =
+  let rec loop prefix path =
+    match prefix, path with
+    | [], _ -> true
+    | expected :: prefix_rest, current :: path_rest when String.equal expected current -> loop prefix_rest path_rest
+    | _ -> false
+  in
+  loop prefix path
+
 
 let central_concepts_internal (analyzed_source : analyzed_source) : concept list =
   let weights = Hashtbl.create 512 in
@@ -578,22 +682,31 @@ let random_choice items =
   | _ -> Some (List.nth items (Random.int (List.length items)))
 
 let build_generated_phrase analyzed_source token =
-  let rec extend seen current remaining acc =
-    if remaining <= 0 then List.rev acc
+  let anchor =
+    Option.value
+      (Hashtbl.find_opt analyzed_source.generation_starts token)
+      ~default:[ (String.lowercase_ascii token, 1) ]
+    |> List.sort (fun (_, a) (_, b) -> compare b a)
+    |> List.map fst |> take_random_items 3 |> random_choice
+    |> Option.value ~default:(String.lowercase_ascii token)
+  in
+  let rec extend graph seen current remaining acc =
+    if remaining <= 0 then acc
     else
       let neighbours =
-        Option.value (Hashtbl.find_opt analyzed_source.collocations current) ~default:[]
+        Option.value (Hashtbl.find_opt graph current) ~default:[]
         |> List.sort (fun (_, a) (_, b) -> compare b a)
         |> List.map fst
         |> List.filter (fun candidate -> not (List.mem candidate seen))
       in
-      match random_choice (take_random_items 3 neighbours) with
-      | None -> List.rev acc
-      | Some next -> extend (next :: seen) next (remaining - 1) (next :: acc)
+      match random_choice (take_random_items 4 neighbours) with
+      | None -> acc
+      | Some next -> extend graph (next :: seen) next (remaining - 1) (next :: acc)
   in
-  let phrase_tokens = token :: extend [ token ] token 5 [] in
+  let left = extend analyzed_source.generation_predecessors [ anchor ] anchor 3 [] |> List.rev in
+  let right = extend analyzed_source.generation_collocations [ anchor ] anchor 4 [] in
+  let phrase_tokens = left @ (anchor :: right) in
   phrase_tokens
-  |> List.map (fun item -> if item = "" then item else String.lowercase_ascii item)
   |> String.concat " "
   |> String.capitalize_ascii
   |> fun phrase -> phrase ^ "."
@@ -619,7 +732,9 @@ let generate_internal (analyzed_source : analyzed_source) word =
     let fallback_candidates =
       analyzed_source.docs
       |> List.filter_map (fun document ->
-             if List.mem token document.tokens then Some (String.capitalize_ascii (String.concat " " (take_random_items 4 document.tokens)) ^ ".") else None)
+             if List.exists (fun item -> String.equal (normalize_token item) token) document.generation_tokens then
+               Some (String.capitalize_ascii (String.concat " " (take_random_items 6 document.generation_tokens)) ^ ".")
+             else None)
       |> List.filter is_valid |> List.sort_uniq String.compare
     in
     let missing = max 0 (2 - List.length synthetic) in
@@ -889,7 +1004,7 @@ let load_reference_stats ~root =
   else
     let json = Yojson.Safe.from_file (reference_artifact_path ~root) in
     let open Yojson.Safe.Util in
-    let docs, _df, total_tokens, _average_length, _collocations =
+    let docs, _df, total_tokens, _average_length, _collocations, _generation_collocations, _generation_predecessors, _generation_starts =
       json |> member "documents" |> to_list |> List.map document_of_json |> analyze_documents
     in
     (group_term_frequencies docs, total_tokens)
@@ -911,8 +1026,8 @@ let load ~root ~source =
       match source_entry with
       | None -> Error ("Source inconnue: " ^ source)
       | Some source_entry ->
-          let docs, df, total_tokens, average_length, collocations = analyze_documents source_entry.documents in
-          let reference_docs, _reference_df, reference_total_tokens, _average_length, _collocations = analyze_documents legacy.reference in
+          let docs, df, total_tokens, average_length, collocations, generation_collocations, generation_predecessors, generation_starts = analyze_documents source_entry.documents in
+          let reference_docs, _reference_df, reference_total_tokens, _average_length, _collocations, _generation_collocations, _generation_predecessors, _generation_starts = analyze_documents legacy.reference in
           let reference_tf = group_term_frequencies reference_docs in
           Ok
             {
@@ -924,6 +1039,9 @@ let load ~root ~source =
                   total_tokens;
                   average_length;
                   collocations;
+                  generation_collocations;
+                  generation_predecessors;
+                  generation_starts;
                   specific_terms_cache = None;
                   central_concepts_cache = None;
                   themes_cache = None;
@@ -938,7 +1056,7 @@ let load ~root ~source =
       | Some source_info ->
           let source_json = Yojson.Safe.from_file (source_artifact_path ~root ~source_id:source) in
           let source_stored = source_of_json source_json in
-          let docs, df, total_tokens, average_length, collocations = analyze_documents source_stored.documents in
+          let docs, df, total_tokens, average_length, collocations, generation_collocations, generation_predecessors, generation_starts = analyze_documents source_stored.documents in
           let reference_tf, reference_total_tokens = load_reference_stats ~root in
           Ok
             {
@@ -950,6 +1068,9 @@ let load ~root ~source =
                   total_tokens;
                   average_length;
                   collocations;
+                  generation_collocations;
+                  generation_predecessors;
+                  generation_starts;
                   specific_terms_cache = None;
                   central_concepts_cache = None;
                   themes_cache = None;
@@ -1017,6 +1138,28 @@ let specific_terms corpus ~source =
       let terms = specific_terms_internal corpus analyzed_source in
       analyzed_source.specific_terms_cache <- Some terms;
       terms
+
+let specific_terms_for_path corpus ~root ~names ~bible_translation ~source ~path =
+  let analyzed_source = lookup_source corpus source in
+  let mapped_docs =
+    analyzed_source.docs
+    |> List.filter_map (fun (document : analyzed_document) ->
+           match Sources.selector_path_of_reference ~root ~names ~bible_translation ~reference:document.stored.reference with
+           | Ok (doc_source, doc_path) when String.equal doc_source source && path_is_prefix path doc_path -> Some document
+           | Ok _ -> None
+           | Error _ -> None)
+  in
+  match mapped_docs with
+  | [] -> Error "Aucun document ne correspond à la hiérarchie demandée."
+  | docs ->
+      if String.equal source "Bible" then
+        Ok (specific_terms_against_reference ~df:(doc_frequency docs) ~documents:docs ~reference_tf:corpus.reference_tf ~reference_total_tokens:corpus.reference_total_tokens)
+      else
+        let remainder = List.filter (fun document -> not (List.memq document docs)) analyzed_source.docs in
+        let remainder_tf = group_term_frequencies remainder in
+        let remainder_total_tokens = total_tokens_of_documents remainder in
+        if remainder_total_tokens = 0 then Error "Aucun corpus de comparaison disponible pour cette hiérarchie."
+        else Ok (specific_terms_against_reference ~df:(doc_frequency docs) ~documents:docs ~reference_tf:remainder_tf ~reference_total_tokens:remainder_total_tokens)
 
 let central_concepts corpus ~source =
   let analyzed_source = lookup_source corpus source in

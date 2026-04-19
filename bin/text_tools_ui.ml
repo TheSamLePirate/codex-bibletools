@@ -7,12 +7,16 @@ type operation =
   | Search_lexical
   | Search_semantic
   | Specific_terms
+  | Specific_terms_hierarchy
   | Central_concepts
   | Themes
   | Summary
   | Generate
 
 type t = {
+  root : string;
+  names : Book_names.t;
+  bible_translation : string;
   corpus : Text_process.t;
   window : Gtk_bindings.widget;
   source_combo : combo_state;
@@ -111,6 +115,7 @@ let operation_of_string = function
   | "search-lexical" -> Search_lexical
   | "search-semantic" -> Search_semantic
   | "specific-terms" -> Specific_terms
+  | "specific-terms-hierarchy" -> Specific_terms_hierarchy
   | "central-concepts" -> Central_concepts
   | "themes" -> Themes
   | "summary" -> Summary
@@ -119,21 +124,22 @@ let operation_of_string = function
 
 let operation_requires_query = function
   | Search_lexical | Search_semantic | Summary | Generate -> true
-  | Specific_terms | Central_concepts | Themes -> false
+  | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes -> false
 
 let operation_supports_reroll = function
   | Generate -> true
-  | Search_lexical | Search_semantic | Specific_terms | Central_concepts | Themes | Summary -> false
+  | Search_lexical | Search_semantic | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes | Summary -> false
 
 let operation_query_label = function
   | Generate -> "Mot"
   | Search_lexical | Search_semantic | Summary -> "Question"
-  | Specific_terms | Central_concepts | Themes -> "Question"
+  | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes -> "Question"
 
 let operation_label = function
   | Search_lexical -> "Recherche lexicale"
   | Search_semantic -> "Recherche sémantique"
   | Specific_terms -> "Vocabulaire spécifique"
+  | Specific_terms_hierarchy -> "Vocabulaire spécifique hiérarchique"
   | Central_concepts -> "Concepts centraux"
   | Themes -> "Hiérarchie thématique"
   | Summary -> "Résumé"
@@ -147,6 +153,71 @@ let set_status ui text = Gtk_bindings.label_set_text ui.status_label text
 
 let log_text_tools message = prerr_endline ("[textTools] " ^ message)
 
+let current_source_descriptor ui source =
+  Sources.list_sources ~root:ui.root |> List.find_opt (fun (descriptor : Sources.source_descriptor) -> String.equal descriptor.id source)
+
+let top_hierarchy_entries ui source =
+  match Sources.selector_options ~root:ui.root ~names:ui.names ~bible_translation:ui.bible_translation ~source ~path:[] with
+  | Ok options -> options
+  | Error _ -> []
+
+let render_hierarchical_specific_terms ui ~source ~path ~label =
+  match Text_process.specific_terms_for_path ui.corpus ~root:ui.root ~names:ui.names ~bible_translation:ui.bible_translation ~source ~path with
+  | Error message -> Error message
+  | Ok terms ->
+      let body = terms |> List.map (fun (term : Text_process.term_score) -> escape_markup_text term.term) |> String.concat "&#10;" in
+      Ok
+        (markup_paragraphs
+           [
+             markup_heading (operation_label Specific_terms_hierarchy);
+             markup_heading label;
+             if body = "" then escape_markup_text "Aucun résultat." else body;
+           ])
+
+let show_hierarchy_specific_terms_dialog ui source =
+  let entries = top_hierarchy_entries ui source in
+  let descriptor = current_source_descriptor ui source in
+  match entries, descriptor with
+  | [], _ ->
+      set_status ui ("Source: " ^ source ^ " | Aucune hiérarchie disponible.");
+      set_output ui (markup_paragraphs [ markup_heading (operation_label Specific_terms_hierarchy); escape_markup_text "Aucune hiérarchie disponible." ])
+  | entries, Some descriptor ->
+      let dialog = Gtk_bindings.window_new () in
+      let root_box = Gtk_bindings.box_new ~vertical:true ~spacing:6 in
+      let combo = { widget = Gtk_bindings.combo_box_text_new (); entries = [] } in
+      let button = Gtk_bindings.button_new "Afficher" in
+      let level_label =
+        match descriptor.nomenclature with first :: _ -> String.capitalize_ascii first | [] -> "Niveau"
+      in
+      Gtk_bindings.window_set_title dialog (operation_label Specific_terms_hierarchy);
+      Gtk_bindings.window_set_default_size dialog ~width:420 ~height:120;
+      fill_combo combo (List.map (fun (option : Sources.selector_option) -> (option.value, option.label)) entries);
+      Gtk_bindings.box_pack_start root_box (create_label ("Choisir un " ^ String.lowercase_ascii level_label)) ~expand:false ~fill:false ~padding:0;
+      Gtk_bindings.box_pack_start root_box combo.widget ~expand:false ~fill:false ~padding:0;
+      Gtk_bindings.box_pack_start root_box button ~expand:false ~fill:false ~padding:0;
+      Gtk_bindings.container_add dialog root_box;
+      Gtk_bindings.connect_clicked button (fun () ->
+          match combo_value combo with
+          | None -> set_status ui ("Source: " ^ source ^ " | Sélection hiérarchique incomplète.")
+          | Some value ->
+              let label =
+                entries |> List.find_opt (fun (option : Sources.selector_option) -> String.equal option.value value)
+                |> Option.map (fun (option : Sources.selector_option) -> option.label) |> Option.value ~default:value
+              in
+              (match render_hierarchical_specific_terms ui ~source ~path:[ value ] ~label with
+              | Ok markup ->
+                  set_output ui markup;
+                  set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label Specific_terms_hierarchy ^ " | " ^ level_label ^ ": " ^ label)
+              | Error message ->
+                  set_output ui (markup_paragraphs [ markup_heading (operation_label Specific_terms_hierarchy); escape_markup_text message ]);
+                  set_status ui ("Source: " ^ source ^ " | " ^ message));
+              Gtk_bindings.widget_hide dialog);
+      Gtk_bindings.connect_destroy dialog (fun () -> ());
+      Gtk_bindings.widget_show_all dialog;
+      Gtk_bindings.window_present dialog
+  | _, None ->
+      set_status ui ("Source: " ^ source ^ " | Source hiérarchique inconnue.");
+      set_output ui (markup_paragraphs [ markup_heading (operation_label Specific_terms_hierarchy); escape_markup_text "Source hiérarchique inconnue." ])
 let update_query_visibility ui =
   match selected_operation ui with
   | Some operation ->
@@ -167,18 +238,11 @@ let operation_markup ui source operation query =
   match operation with
   | Search_lexical -> format_hits (operation_label operation) (Text_process.lexical_search ui.corpus ~source ~query)
   | Search_semantic -> format_hits (operation_label operation) (Text_process.semantic_search ui.corpus ~source ~query)
+  | Specific_terms_hierarchy -> markup_paragraphs [ markup_heading (operation_label operation); escape_markup_text "Choisissez un niveau hiérarchique." ]
   | Specific_terms ->
       let body =
-        Text_process.specific_terms ui.corpus ~source
-        |> List.mapi (fun index (term : Text_process.term_score) ->
-               let reference_frequency =
-                 match term.reference_frequency with
-                 | None -> ""
-                 | Some value -> Printf.sprintf "&#10;fréquence de référence=%d" value
-               in
-               Printf.sprintf "%d. %s&#10;score=%.3f&#10;fréquence=%d%s" (index + 1) (escape_markup_text term.term) term.score
-                 term.frequency reference_frequency)
-        |> markup_paragraphs
+        Text_process.specific_terms ui.corpus ~source |> List.map (fun (term : Text_process.term_score) -> escape_markup_text term.term)
+        |> String.concat "&#10;"
       in
       markup_paragraphs [ markup_heading (operation_label operation); if body = "" then escape_markup_text "Aucun résultat." else body ]
   | Central_concepts ->
@@ -231,9 +295,14 @@ let run ui =
           | None -> ""
         in
         log_text_tools ("Opération démarrée: " ^ operation_id ^ " sur " ^ source ^ ".");
-        let markup = operation_markup ui source operation query in
-        set_output ui markup;
-        set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation);
+        (match operation with
+        | Specific_terms_hierarchy ->
+            show_hierarchy_specific_terms_dialog ui source;
+            set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation ^ " | Sélection requise.")
+        | _ ->
+            let markup = operation_markup ui source operation query in
+            set_output ui markup;
+            set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation));
         log_text_tools ("Opération terminée: " ^ operation_id ^ " sur " ^ source ^ "."))
   | _ ->
       update_query_visibility ui;
@@ -241,6 +310,11 @@ let run ui =
 
 let launch root source_id =
   Gtk_bindings.init ();
+  let names =
+    match Book_names.load ~root with
+    | Ok names -> names
+    | Error message -> failwith message
+  in
   let corpus =
     match Text_process.load ~root ~source:source_id with
     | Ok corpus -> corpus
@@ -266,7 +340,7 @@ let launch root source_id =
   Gtk_bindings.label_set_line_wrap output_label true;
   Gtk_bindings.label_set_selectable output_label true;
   Gtk_bindings.container_add scroll output_label;
-  let ui = { corpus; window; source_combo; operation_combo; query_label; query_entry; reroll_button; output_label; status_label } in
+  let ui = { root; names; bible_translation = "bible_aelf"; corpus; window; source_combo; operation_combo; query_label; query_entry; reroll_button; output_label; status_label } in
   let pack_label text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
   let pack_widget widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
   pack_label "Source";
@@ -287,6 +361,7 @@ let launch root source_id =
       ("search-lexical", "Recherche lexicale");
       ("search-semantic", "Recherche sémantique");
       ("specific-terms", "Vocabulaire spécifique");
+      ("specific-terms-hierarchy", "Vocabulaire spécifique hiérarchique");
       ("central-concepts", "Concepts centraux");
       ("themes", "Thèmes");
       ("summary", "Résumé");
