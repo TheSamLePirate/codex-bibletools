@@ -12,6 +12,22 @@ type operation =
   | Themes
   | Summary
   | Generate
+  | Quiz_open
+  | Quiz_mcq
+
+type quiz_item = {
+  quiz_operation : operation;
+  quiz_source : string;
+  question : Quiz.question;
+  reference : string;
+  title : string;
+}
+
+type quiz_cache = {
+  cache_source : string;
+  open_questions : quiz_item list;
+  mcq_questions : quiz_item list;
+}
 
 type t = {
   root : string;
@@ -24,8 +40,11 @@ type t = {
   query_label : Gtk_bindings.widget;
   query_entry : Gtk_bindings.widget;
   reroll_button : Gtk_bindings.widget;
+  new_question_button : Gtk_bindings.widget;
   output_label : Gtk_bindings.widget;
   status_label : Gtk_bindings.widget;
+  mutable current_quiz : quiz_item option;
+  mutable quiz_cache : quiz_cache option;
 }
 
 let compact_text max_chars text =
@@ -120,20 +139,26 @@ let operation_of_string = function
   | "themes" -> Themes
   | "summary" -> Summary
   | "generate" -> Generate
+  | "quiz-open" -> Quiz_open
+  | "quiz-mcq" -> Quiz_mcq
   | _ -> Search_lexical
 
 let operation_requires_query = function
   | Search_lexical | Search_semantic | Summary | Generate -> true
-  | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes -> false
+  | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes | Quiz_open | Quiz_mcq -> false
 
 let operation_supports_reroll = function
   | Generate -> true
-  | Search_lexical | Search_semantic | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes | Summary -> false
+  | Search_lexical | Search_semantic | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes | Summary | Quiz_open | Quiz_mcq -> false
+
+let operation_supports_new_question = function
+  | Quiz_open | Quiz_mcq -> true
+  | Search_lexical | Search_semantic | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes | Summary | Generate -> false
 
 let operation_query_label = function
   | Generate -> "Mot"
   | Search_lexical | Search_semantic | Summary -> "Question"
-  | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes -> "Question"
+  | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes | Quiz_open | Quiz_mcq -> "Question"
 
 let operation_label = function
   | Search_lexical -> "Recherche lexicale"
@@ -144,6 +169,8 @@ let operation_label = function
   | Themes -> "Hiérarchie thématique"
   | Summary -> "Résumé"
   | Generate -> "Génération depuis un mot"
+  | Quiz_open -> "Quizz"
+  | Quiz_mcq -> "QCM"
 
 let selected_operation ui = combo_value ui.operation_combo |> Option.map operation_of_string
 
@@ -229,10 +256,126 @@ let update_query_visibility ui =
         Gtk_bindings.widget_hide ui.query_label;
         Gtk_bindings.widget_hide ui.query_entry);
       if operation_supports_reroll operation then Gtk_bindings.widget_show ui.reroll_button else Gtk_bindings.widget_hide ui.reroll_button
+      ;
+      if operation_supports_new_question operation then Gtk_bindings.widget_show ui.new_question_button else Gtk_bindings.widget_hide ui.new_question_button
   | None ->
       Gtk_bindings.widget_hide ui.query_label;
       Gtk_bindings.widget_hide ui.query_entry;
-      Gtk_bindings.widget_hide ui.reroll_button
+      Gtk_bindings.widget_hide ui.reroll_button;
+      Gtk_bindings.widget_hide ui.new_question_button
+
+let same_quiz_context item source operation =
+  String.equal item.quiz_source source && item.quiz_operation = operation
+
+let compute_quiz_cache ui source =
+  let documents = Text_process.documents ui.corpus ~source in
+  let facts =
+    documents
+    |> List.concat_map (fun (document : Text_process.document) ->
+           Quiz.segment_sentences ~doc_id:document.document_id document.text
+           |> Quiz.extract_facts
+           |> List.map (fun fact -> (fact, document.reference, document.title)))
+  in
+  let all_facts = List.map (fun (fact, _reference, _title) -> fact) facts in
+  let open_questions =
+    facts
+    |> List.filter_map (fun (fact, reference, title) ->
+           Quiz.generate_open_question fact
+           |> Option.map (fun question -> { quiz_operation = Quiz_open; quiz_source = source; question; reference; title }))
+  in
+  let mcq_questions =
+    facts
+    |> List.filter_map (fun (fact, reference, title) ->
+           Quiz.generate_mcq ~facts:all_facts fact
+           |> Option.map (fun question -> { quiz_operation = Quiz_mcq; quiz_source = source; question; reference; title }))
+  in
+  { cache_source = source; open_questions; mcq_questions }
+
+let quiz_cache ui source =
+  match ui.quiz_cache with
+  | Some cache when String.equal cache.cache_source source -> cache
+  | _ ->
+      let cache = compute_quiz_cache ui source in
+      ui.quiz_cache <- Some cache;
+      cache
+
+let random_item ?current items =
+  let candidates =
+    match current with
+    | None -> items
+    | Some current_item ->
+        let filtered =
+          items
+          |> List.filter (fun item ->
+                 not
+                   (String.equal item.question.question_id current_item.question.question_id
+                   && String.equal item.reference current_item.reference))
+        in
+        if filtered = [] then items else filtered
+  in
+  match candidates with
+  | [] -> None
+  | _ -> Some (List.nth candidates (Random.int (List.length candidates)))
+
+let question_choices_markup choices =
+  choices
+  |> List.mapi (fun index choice ->
+         let letter = Char.chr (Char.code 'A' + index) |> String.make 1 in
+         Printf.sprintf "%s. %s" letter (escape_markup_text choice))
+  |> String.concat "&#10;"
+
+let render_quiz_question item =
+  let choices =
+    match item.question.question_type with
+    | Quiz.Multiple_choice -> "&#10;&#10;" ^ markup_heading "Propositions" ^ "&#10;" ^ question_choices_markup item.question.choices
+    | Quiz.Cloze | Quiz.Open -> ""
+  in
+  markup_paragraphs
+    [
+      markup_heading (operation_label item.quiz_operation);
+      markup_heading "Question" ^ "&#10;" ^ escape_markup_text item.question.prompt ^ choices;
+      escape_markup_text "Cliquez sur OK pour afficher la réponse.";
+    ]
+
+let render_quiz_answer item =
+  markup_paragraphs
+    [
+      markup_heading (operation_label item.quiz_operation);
+      markup_heading "Question" ^ "&#10;" ^ escape_markup_text item.question.prompt;
+      (match item.question.question_type with
+      | Quiz.Multiple_choice -> markup_heading "Propositions" ^ "&#10;" ^ question_choices_markup item.question.choices
+      | Quiz.Cloze | Quiz.Open -> "");
+      markup_heading "Réponse" ^ "&#10;" ^ escape_markup_text item.question.correct_answer;
+      markup_heading "Vérification"
+      ^ "&#10;"
+      ^ Printf.sprintf "%s - %s&#10;%s" (reference_link_markup item.reference) (escape_markup_text item.title)
+          (escape_markup_text item.question.support_text);
+    ]
+
+let new_quiz_question ui source operation =
+  let cache = quiz_cache ui source in
+  let items =
+    match operation with
+    | Quiz_open -> cache.open_questions
+    | Quiz_mcq -> cache.mcq_questions
+    | Search_lexical | Search_semantic | Specific_terms | Specific_terms_hierarchy | Central_concepts | Themes | Summary | Generate -> []
+  in
+  match random_item ?current:ui.current_quiz items with
+  | None ->
+      ui.current_quiz <- None;
+      set_output ui (markup_paragraphs [ markup_heading (operation_label operation); escape_markup_text "Aucune question disponible pour cette source." ]);
+      set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation ^ " | Aucune question disponible.")
+  | Some item ->
+      ui.current_quiz <- Some item;
+      set_output ui (render_quiz_question item);
+      set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation ^ " | Question prête.")
+
+let reveal_quiz_answer ui source operation =
+  match ui.current_quiz with
+  | Some item when same_quiz_context item source operation ->
+      set_output ui (render_quiz_answer item);
+      set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation ^ " | Réponse affichée.")
+  | _ -> new_quiz_question ui source operation
 
 let operation_markup ui source operation query =
   match operation with
@@ -279,6 +422,7 @@ let operation_markup ui source operation query =
   | Generate ->
       let text = Text_process.generate_from_word ui.corpus ~source ~word:query |> String.concat "\n\n" in
       markup_paragraphs [ markup_heading (operation_label operation); if text = "" then escape_markup_text "Aucune génération." else escape_markup_text text ]
+  | Quiz_open | Quiz_mcq -> markup_paragraphs [ markup_heading (operation_label operation); escape_markup_text "Cliquez sur OK pour afficher la réponse." ]
 
 let run ui =
   update_query_visibility ui;
@@ -299,6 +443,7 @@ let run ui =
         | Specific_terms_hierarchy ->
             show_hierarchy_specific_terms_dialog ui source;
             set_status ui ("Source: " ^ source ^ " | Opération: " ^ operation_label operation ^ " | Sélection requise.")
+        | Quiz_open | Quiz_mcq -> reveal_quiz_answer ui source operation
         | _ ->
             let markup = operation_markup ui source operation query in
             set_output ui markup;
@@ -331,8 +476,9 @@ let launch root source_id =
   let operation_combo = { widget = Gtk_bindings.combo_box_text_new (); entries = [] } in
   let query_label = create_label "Question" in
   let query_entry = Gtk_bindings.entry_new () in
-  let run_button = Gtk_bindings.button_new "Exécuter" in
+  let run_button = Gtk_bindings.button_new "OK" in
   let reroll_button = Gtk_bindings.button_new "Nouvelle réponse aléatoire" in
+  let new_question_button = Gtk_bindings.button_new "Nouvelle question aléatoire" in
   let scroll = Gtk_bindings.scrolled_window_new () in
   Gtk_bindings.window_set_title window "text tools";
   Gtk_bindings.window_set_default_size window ~width:1000 ~height:760;
@@ -340,7 +486,25 @@ let launch root source_id =
   Gtk_bindings.label_set_line_wrap output_label true;
   Gtk_bindings.label_set_selectable output_label true;
   Gtk_bindings.container_add scroll output_label;
-  let ui = { root; names; bible_translation = "bible_aelf"; corpus; window; source_combo; operation_combo; query_label; query_entry; reroll_button; output_label; status_label } in
+  let ui =
+    {
+      root;
+      names;
+      bible_translation = "bible_aelf";
+      corpus;
+      window;
+      source_combo;
+      operation_combo;
+      query_label;
+      query_entry;
+      reroll_button;
+      new_question_button;
+      output_label;
+      status_label;
+      current_quiz = None;
+      quiz_cache = None;
+    }
+  in
   let pack_label text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
   let pack_widget widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
   pack_label "Source";
@@ -351,6 +515,7 @@ let launch root source_id =
   Gtk_bindings.box_pack_start row query_entry ~expand:true ~fill:true ~padding:0;
   pack_widget run_button;
   pack_widget reroll_button;
+  pack_widget new_question_button;
   Gtk_bindings.box_pack_start root_box row ~expand:false ~fill:false ~padding:0;
   Gtk_bindings.box_pack_start root_box scroll ~expand:true ~fill:true ~padding:0;
   Gtk_bindings.box_pack_start root_box status_label ~expand:false ~fill:false ~padding:0;
@@ -366,16 +531,27 @@ let launch root source_id =
       ("themes", "Thèmes");
       ("summary", "Résumé");
       ("generate", "Génération");
+      ("quiz-open", "Quizz");
+      ("quiz-mcq", "QCM");
     ];
   Gtk_bindings.connect_destroy window Gtk_bindings.main_quit;
   Gtk_bindings.connect_ctrl_q window (fun () -> Gtk_bindings.main_quit ());
   Gtk_bindings.connect_clicked run_button (fun () -> run ui);
   Gtk_bindings.connect_clicked reroll_button (fun () -> run ui);
+  Gtk_bindings.connect_clicked new_question_button (fun () ->
+      match combo_value ui.source_combo, selected_operation ui with
+      | Some source, Some (Quiz_open as operation) | Some source, Some (Quiz_mcq as operation) -> new_quiz_question ui source operation
+      | _ -> ());
   Gtk_bindings.connect_activate query_entry (fun () -> run ui);
   Gtk_bindings.connect_activate_link output_label (fun uri ->
       try open_uri uri with Unix.Unix_error (_error, _fn, _arg) -> set_status ui ("Impossible d'ouvrir le lien: " ^ uri));
-  Gtk_bindings.connect_changed source_combo.widget (fun () -> run ui);
-  Gtk_bindings.connect_changed operation_combo.widget (fun () -> run ui);
+  Gtk_bindings.connect_changed source_combo.widget (fun () ->
+      ui.current_quiz <- None;
+      ui.quiz_cache <- None;
+      run ui);
+  Gtk_bindings.connect_changed operation_combo.widget (fun () ->
+      ui.current_quiz <- None;
+      run ui);
   Gtk_bindings.widget_show_all window;
   update_query_visibility ui;
   run ui;

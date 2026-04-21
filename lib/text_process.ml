@@ -60,6 +60,13 @@ type summary = {
   passages : (string * string * string) list;
 }
 
+type document = {
+  document_id : string;
+  title : string;
+  reference : string;
+  text : string;
+}
+
 type analyzed_document = {
   stored : stored_document;
   count_map : (string, int) Hashtbl.t;
@@ -1084,6 +1091,17 @@ let lookup_source corpus source =
   if String.equal corpus.source.info.id source then corpus.source else invalid_arg ("Source inconnue: " ^ source)
 
 let sources corpus = [ corpus.source.info ]
+
+let documents corpus ~source =
+  let analyzed_source = lookup_source corpus source in
+  analyzed_source.docs
+  |> List.map (fun (document : analyzed_document) ->
+         {
+           document_id = document.stored.id;
+           title = document.stored.title;
+           reference = document.stored.reference;
+           text = document.stored.text;
+         })
 
 let lexical_search corpus ~source ~query =
   let analyzed_source = lookup_source corpus source in

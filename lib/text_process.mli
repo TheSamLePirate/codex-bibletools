@@ -47,11 +47,33 @@ type summary = {
   passages : (string * string * string) list;
 }
 
+(** Document textuel public extrait du corpus prétraité. *)
+type document = {
+  document_id : string;
+  title : string;
+  reference : string;
+  text : string;
+}
+
 (** Chemin du manifeste principal attendu pour le prétraitement. *)
 val artifact_path : root:string -> string
 
 (** Commande à exécuter pour régénérer les artefacts de prétraitement. *)
 val preprocess_command : string
+
+(** Normalise les blancs internes et supprime les blancs en bordure. *)
+val normalize_spaces : string -> string
+
+(** Normalise un token pour les algorithmes textuels partagés.
+    Les chiffres sont ignorés, les préfixes élidés français sont retirés,
+    et quelques pluriels/conjugaisons simples sont ramenés à une forme stable. *)
+val normalize_token : string -> string
+
+(** Découpe un texte en tokens de contenu normalisés, avec filtrage des stopwords. *)
+val tokenize : string -> string list
+
+(** Découpe un texte en phrases normalisées. *)
+val split_sentences : string -> string list
 
 (** Prétraite les sources disponibles depuis [root] et écrit les artefacts JSON sur disque.
     Retourne [Error _] si l'écriture ou le chargement des sources échoue. *)
@@ -68,6 +90,9 @@ val load : root:string -> source:string -> (t, string) result
 (** Liste les sources effectivement chargées dans [t].
     Dans l'architecture actuelle, la liste contient la source unique demandée à [load]. *)
 val sources : t -> source_info list
+
+(** Liste les documents de la source chargée, sans exposer les index internes. *)
+val documents : t -> source:string -> document list
 
 (** Recherche lexicale BM25 bornée aux vingt meilleurs résultats. *)
 val lexical_search : t -> source:string -> query:string -> search_hit list

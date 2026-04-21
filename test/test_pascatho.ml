@@ -163,6 +163,68 @@ let () =
   assert_true
     (Book_names.canonical_title names_without_js "Jn" = Some "Jean")
     "Les noms bibliques ne doivent plus dépendre du fichier bibleTools.js.";
+  let quiz_sentences =
+    Quiz.segment_sentences ~doc_id:"quiz"
+      "La photosynthèse est un processus chimique. Diodore Cronos a formulé l'argument dominateur. La prise de la Bastille a eu lieu en 1789. Les états sont : solide, liquide et gazeux."
+  in
+  assert_true
+    (Quiz.tokenize "Diodore Cronos, 1789" = Text_process.tokenize "Diodore Cronos, 1789"
+    && List.length (Quiz.tokenize "Diodore Cronos, 1789") = 2)
+    "Quiz.tokenize doit réutiliser le tokenizer partagé et ignorer les chiffres.";
+  assert_true (String.equal (Quiz.lemmatize_token "plantes") "plant") "Quiz.lemmatize_token doit normaliser les pluriels simples.";
+  assert_true (List.length quiz_sentences = 4) "Quiz.segment_sentences doit découper le texte en phrases annotées.";
+  let definitions = Quiz.extract_definitions quiz_sentences in
+  assert_true
+    (List.exists (fun (fact : Quiz.fact) -> String.equal fact.subject "La photosynthèse" && String.equal fact.object_ "un processus chimique") definitions)
+    "Quiz.extract_definitions doit extraire les patrons définitoires simples.";
+  let relations =
+    Quiz.extract_relations quiz_sentences
+    @ Quiz.extract_relations (Quiz.segment_sentences ~doc_id:"quiz_passif" "L'argument dominateur a été formulé par Diodore Cronos.")
+  in
+  assert_true
+    (List.exists (fun (fact : Quiz.fact) -> String.equal fact.subject "Diodore Cronos" && String.equal fact.predicate "formuler") relations)
+    "Quiz.extract_relations doit extraire les relations actives et passives.";
+  let dates = Quiz.extract_dates quiz_sentences in
+  assert_true
+    (List.exists (fun (fact : Quiz.fact) -> fact.fact_type = Quiz.Date_event && String.equal fact.object_ "1789") dates)
+    "Quiz.extract_dates doit extraire les faits temporels.";
+  let enumerations = Quiz.extract_enumerations quiz_sentences in
+  assert_true
+    (List.exists (fun (fact : Quiz.fact) -> fact.fact_type = Quiz.Enumeration && String.equal fact.object_ "solide, liquide, gazeux") enumerations)
+    "Quiz.extract_enumerations doit extraire les listes explicites.";
+  let quiz_facts = Quiz.extract_facts quiz_sentences in
+  assert_true (List.length quiz_facts >= 4) "Quiz.extract_facts doit combiner les extracteurs de faits.";
+  let definition_fact = List.hd definitions in
+  assert_true (Quiz.score_fact definition_fact > 0.0) "Quiz.score_fact doit produire un score pédagogique positif.";
+  let cloze =
+    match Quiz.generate_cloze definition_fact with Some question -> question | None -> fail "Quiz.generate_cloze doit produire une question à trou."
+  in
+  assert_true
+    (String.contains cloze.prompt '_' && String.equal cloze.correct_answer "un processus chimique" && cloze.valid)
+    "Quiz.generate_cloze doit masquer la réponse et valider son support.";
+  let open_question =
+    match Quiz.generate_open_question definition_fact with Some question -> question | None -> fail "Quiz.generate_open_question doit produire une question ouverte."
+  in
+  assert_true
+    (String.equal open_question.correct_answer "un processus chimique" && open_question.valid)
+    "Quiz.generate_open_question doit produire une réponse supportée par le texte.";
+  let mcq_sentences =
+    Quiz.segment_sentences ~doc_id:"quiz_mcq"
+      "Diodore Cronos a formulé l'argument dominateur. Chrysippe a formulé la logique stoïcienne. Épicure a formulé une doctrine atomiste."
+  in
+  let mcq_facts = Quiz.extract_relations mcq_sentences in
+  let mcq_fact = List.hd mcq_facts in
+  let distractors = Quiz.generate_distractors ~facts:mcq_facts mcq_fact in
+  assert_true (List.length distractors >= 2) "Quiz.generate_distractors doit produire des distracteurs typés intra-corpus.";
+  let mcq =
+    match Quiz.generate_mcq ~facts:mcq_facts mcq_fact with Some question -> question | None -> fail "Quiz.generate_mcq doit produire un QCM."
+  in
+  assert_true
+    (mcq.question_type = Quiz.Multiple_choice && Quiz.validate_question mcq)
+    "Quiz.generate_mcq et Quiz.validate_question doivent produire un QCM valide.";
+  assert_true
+    (List.length (Quiz.deduplicate_questions [ open_question; open_question ]) = 1)
+    "Quiz.deduplicate_questions doit supprimer les questions redondantes.";
   let* () = with_temp_dir "textprocess" (fun temp_root ->
       let datas_dir = Filename.concat temp_root "datas" in
       Unix.mkdir datas_dir 0o755;
@@ -298,6 +360,16 @@ let () =
       assert_true
         (List.exists (fun (source : Text_process.source_info) -> String.equal source.id "demo" && source.document_count = 2) text_sources)
         "Le corpus texte chargé doit exposer les sources prétraitées.";
+      let text_documents = Text_process.documents text_corpus ~source:"demo" in
+      assert_true
+        (List.exists
+           (fun (document : Text_process.document) ->
+             String.equal document.document_id "demo:1"
+             && String.equal document.reference "Demo 1"
+             && String.equal document.title "Doc 1"
+             && String.trim document.text <> "")
+           text_documents)
+        "Le corpus texte doit exposer les documents nécessaires aux quiz sans exposer les index internes.";
       let lexical_hits = Text_process.lexical_search text_corpus ~source:"demo" ~query:"paix" in
       assert_true
         (match lexical_hits with first :: _ -> String.equal first.reference "Demo 1" | [] -> false)
@@ -733,6 +805,11 @@ let () =
   assert_true
     (List.exists (fun line -> string_starts_with ~prefix:"Sources disponibles: " line) text_tools_lines)
     "textTools doit lister les sources disponibles quand --source est absent.";
+  let cli_binary = Filename.concat root "_build/default/bin/cli.exe" in
+  let cli_lines = run_command_capture_lines [ cli_binary; "Coran:1.1" ] in
+  assert_true
+    (List.exists (fun line -> String.trim line <> "") cli_lines)
+    "cli doit afficher le texte associé à la référence fournie.";
   let translations_lines = run_command_capture_lines_in_dir "/tmp" [ binary; "translations" ] in
   assert_true (translations_lines <> []) "Le binaire doit retrouver la racine du projet même hors du dépôt.";
   let help_lines = run_command_capture_lines [ binary; "--help=plain" ] in

@@ -48,3 +48,9 @@
  (public_name processSources)
  (modules processSources)
  (libraries pascatho cmdliner unix))
+
+(executable
+ (name cli)
+ (public_name cli)
+ (modules cli)
+ (libraries pascatho))
