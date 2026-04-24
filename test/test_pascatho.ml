@@ -115,6 +115,12 @@ let with_temp_dir prefix f =
   Fun.protect ~finally:(fun () -> ()) (fun () -> f base)
 
 let () =
+  assert_true
+    (Ui_tools.combo_scroll_target ~current:2 ~count:5 ~direction:1 = Some 3
+    && Ui_tools.combo_scroll_target ~current:2 ~count:5 ~direction:(-1) = Some 1
+    && Ui_tools.combo_scroll_target ~current:0 ~count:5 ~direction:(-1) = None
+    && Ui_tools.combo_scroll_target ~current:4 ~count:5 ~direction:1 = None)
+    "Ui_tools.combo_scroll_target doit borner correctement la sélection à la molette.";
   let* initial_address_space_limit = Process_limits.address_space_limit_bytes () in
   let eight_gib = Int64.mul 8L 1_073_741_824L in
   let requested_limit =

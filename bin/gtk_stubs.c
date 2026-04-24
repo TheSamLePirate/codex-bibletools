@@ -169,6 +169,10 @@ struct string_callback_data {
   value closure;
 };
 
+struct int_callback_data {
+  value closure;
+};
+
 typedef struct _GdkEventKey {
   int type;
   gpointer window;
@@ -177,6 +181,22 @@ typedef struct _GdkEventKey {
   guint state;
   guint keyval;
 } GdkEventKey;
+
+typedef struct _GdkEventScroll {
+  int type;
+  gpointer window;
+  signed char send_event;
+  guint32 time;
+  double x;
+  double y;
+  guint state;
+  int direction;
+  gpointer device;
+  double x_root;
+  double y_root;
+  double delta_x;
+  double delta_y;
+} GdkEventScroll;
 
 struct background_data {
   gpointer widget;
@@ -199,6 +219,14 @@ static void destroy_string_callback_data(gpointer data, gpointer closure)
   free(cb);
 }
 
+static void destroy_int_callback_data(gpointer data, gpointer closure)
+{
+  (void)closure;
+  struct int_callback_data *cb = (struct int_callback_data *)data;
+  caml_remove_global_root(&cb->closure);
+  free(cb);
+}
+
 static gboolean activate_link_callback(gpointer widget, const gchar *uri, gpointer data)
 {
   CAMLparam0();
@@ -217,6 +245,49 @@ static value connect_string_signal(value widget, const char *signal_name, value 
   data->closure = closure;
   caml_register_global_root(&data->closure);
   g_signal_connect_data(unwrap_ptr(widget), signal_name, (GCallback)activate_link_callback, data, destroy_string_callback_data, 0);
+  CAMLreturn(Val_unit);
+}
+
+static gboolean scroll_callback(gpointer widget, gpointer event, gpointer data)
+{
+  CAMLparam0();
+  CAMLlocal1(argument);
+  int step = 0;
+  GdkEventScroll *scroll = (GdkEventScroll *)event;
+  (void)widget;
+  switch (scroll->direction) {
+    case 0:
+      step = -1;
+      break;
+    case 1:
+      step = 1;
+      break;
+    case 4:
+      if (fabs(scroll->delta_y) > fabs(scroll->delta_x)) {
+        if (scroll->delta_y > 0.0) step = 1;
+        else if (scroll->delta_y < 0.0) step = -1;
+      }
+      break;
+    default:
+      step = 0;
+      break;
+  }
+  if (step != 0) {
+    argument = Val_int(step);
+    caml_callback(((struct int_callback_data *)data)->closure, argument);
+    CAMLreturnT(gboolean, 1);
+  }
+  CAMLreturnT(gboolean, 0);
+}
+
+static value connect_int_signal(value widget, const char *signal_name, value closure, GCallback callback)
+{
+  CAMLparam2(widget, closure);
+  struct int_callback_data *data = malloc(sizeof(struct int_callback_data));
+  if (data == NULL) caml_failwith("malloc");
+  data->closure = closure;
+  caml_register_global_root(&data->closure);
+  g_signal_connect_data(unwrap_ptr(widget), signal_name, callback, data, destroy_int_callback_data, 0);
   CAMLreturn(Val_unit);
 }
 
@@ -904,6 +975,11 @@ CAMLprim value caml_gtk_connect_activate(value widget, value closure)
 CAMLprim value caml_gtk_connect_activate_link(value widget, value closure)
 {
   return connect_string_signal(widget, "activate-link", closure);
+}
+
+CAMLprim value caml_gtk_connect_scroll(value widget, value closure)
+{
+  return connect_int_signal(widget, "scroll-event", closure, (GCallback)scroll_callback);
 }
 
 CAMLprim value caml_gtk_connect_ctrl_f(value widget, value closure)

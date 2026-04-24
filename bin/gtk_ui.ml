@@ -104,6 +104,14 @@ let combo_value combo =
   | index when index >= 0 && index < List.length combo.entries -> Some (fst (List.nth combo.entries index))
   | _ -> None
 
+let connect_combo_scroll combo =
+  Gtk_bindings.connect_scroll combo.widget (fun direction ->
+      let count = List.length combo.entries in
+      let current = Gtk_bindings.combo_box_get_active combo.widget in
+      match Ui_tools.combo_scroll_target ~current ~count ~direction with
+      | Some next -> Gtk_bindings.combo_box_set_active combo.widget next
+      | None -> ())
+
 let plain_markup ui text references =
   Article_markdown.render_source_to_pango_markup ~highlights:ui.highlights ?references text
   |> String.split_on_char '\n' |> String.concat "&#10;"
@@ -717,6 +725,8 @@ let make_ui root names initial_reference =
       append_next_button;
     }
   in
+  List.iter connect_combo_scroll [ translation_combo; source_combo; article_combo ];
+  Array.iter (fun level -> connect_combo_scroll level.combo) levels;
   let pack_label row text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
   let pack_widget row widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
   let compact_width = 56 in

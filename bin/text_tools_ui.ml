@@ -61,6 +61,14 @@ let combo_value combo =
   | index when index >= 0 && index < List.length combo.entries -> Some (fst (List.nth combo.entries index))
   | _ -> None
 
+let connect_combo_scroll combo =
+  Gtk_bindings.connect_scroll combo.widget (fun direction ->
+      let count = List.length combo.entries in
+      let current = Gtk_bindings.combo_box_get_active combo.widget in
+      match Ui_tools.combo_scroll_target ~current ~count ~direction with
+      | Some next -> Gtk_bindings.combo_box_set_active combo.widget next
+      | None -> ())
+
 let create_label text =
   let label = Gtk_bindings.label_new text in
   Gtk_bindings.label_set_line_wrap label true;
@@ -218,6 +226,7 @@ let show_hierarchy_specific_terms_dialog ui source =
       in
       Gtk_bindings.window_set_title dialog (operation_label Specific_terms_hierarchy);
       Gtk_bindings.window_set_default_size dialog ~width:420 ~height:120;
+      connect_combo_scroll combo;
       fill_combo combo (List.map (fun (option : Sources.selector_option) -> (option.value, option.label)) entries);
       Gtk_bindings.box_pack_start root_box (create_label ("Choisir un " ^ String.lowercase_ascii level_label)) ~expand:false ~fill:false ~padding:0;
       Gtk_bindings.box_pack_start root_box combo.widget ~expand:false ~fill:false ~padding:0;
@@ -505,6 +514,7 @@ let launch root source_id =
       quiz_cache = None;
     }
   in
+  List.iter connect_combo_scroll [ source_combo; operation_combo ];
   let pack_label text = Gtk_bindings.box_pack_start row (create_label text) ~expand:false ~fill:false ~padding:0 in
   let pack_widget widget = Gtk_bindings.box_pack_start row widget ~expand:false ~fill:false ~padding:0 in
   pack_label "Source";

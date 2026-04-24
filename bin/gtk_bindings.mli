@@ -65,5 +65,6 @@ val connect_clicked : widget -> (unit -> unit) -> unit
 val connect_changed : widget -> (unit -> unit) -> unit
 val connect_activate : widget -> (unit -> unit) -> unit
 val connect_activate_link : widget -> (string -> unit) -> unit
+val connect_scroll : widget -> (int -> unit) -> unit
 val connect_ctrl_f : widget -> (unit -> unit) -> unit
 val connect_ctrl_q : widget -> (unit -> unit) -> unit
