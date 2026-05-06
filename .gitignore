@@ -3,6 +3,10 @@ _build
 notes/AGENTS-web-server.md
 notes/GENERATE-MLI.md
 notes/COVER-TESTS.md
+datas/textprocess_corpus.json
+datas/textprocess_corpus
+datas/textprocess_manifest.json
+notes/
 AGENTS.md
 scripts
 
