@@ -2,6 +2,10 @@
 
 Application OCaml locale pour explorer plusieurs corpus religieux et doctrinaux depuis une interface GTK native.
 
+Il s'agit d'une interface gtk pour avoir en local le site : http://www.pascatho.ovh
+Le tout est généré par codex(openAI) en ocaml.
+
+
 Le projet reprend la logique de sélection et de références décrite dans [`sources.js`](./sources.js) et historiquement dans [`bibleTools.js`](./bibleTools.js), puis l’expose via :
 - une interface graphique GTK native en OCaml/C
 - un backend CLI `pascatho`
