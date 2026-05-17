@@ -143,6 +143,24 @@ dune exec pascatho
 
 Sur macOS, le linkage GTK passe par `pkg-config` : le fichier `bin/dune` inclut un sexp généré par `bin/gen_gtk_link_flags.sh`, qui interroge `pkg-config --libs gtk+-3.0 …` au moment du build. Aucune adaptation manuelle des chemins n'est nécessaire.
 
+### 5. Construire le bundle `Pascatho.app`
+
+`dune exec pascatho` lance le binaire brut (`pascatho.exe`). Pour obtenir une vraie application macOS — icône `logo.jpeg` dans le Dock, nom « Pascatho » dans Finder, double-clic depuis `/Applications` — utilise le script fourni :
+
+```bash
+dune build
+bash macos/build_app.sh
+open dist/Pascatho.app
+```
+
+Le script :
+- convertit `logo.jpeg` en `Pascatho.icns` via `sips` + `iconutil` (outils macOS natifs) ;
+- assemble `dist/Pascatho.app/` avec `Info.plist`, l'icône, et un lanceur `Contents/MacOS/Pascatho` qui définit `PASCATHO_ROOT` vers le checkout source avant d'exécuter le binaire.
+
+Le bundle reste léger (~5 Mo) car il référence les fichiers `datas/`, `articles/`, `highlights/` du dépôt — déplacer ou supprimer le checkout casse l'application installée. Pour distribuer un `.app` autonome, copie ces dossiers dans `Contents/Resources/` et ajuste le launcher pour pointer `PASCATHO_ROOT` vers `"$DIR/../Resources"`.
+
+Tu peux glisser `Pascatho.app` dans `/Applications` ; macOS suivra le lien vers le binaire et le repo source.
+
 ### Notes macOS
 
 - Pense à ajouter `eval "$(opam env)"` à ton `~/.zshrc` (ou laisse `opam init --auto-setup` le faire) pour que `dune` trouve le switch automatiquement dans chaque nouveau shell.
