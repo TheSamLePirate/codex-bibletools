@@ -1,5 +1,6 @@
 .codex
 _build
+_opam
 notes/AGENTS-web-server.md
 notes/GENERATE-MLI.md
 notes/COVER-TESTS.md

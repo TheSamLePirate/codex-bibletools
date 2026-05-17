@@ -6,42 +6,26 @@
   (language c)
   (names gtk_stubs)))
 
+(rule
+ (target gtk_link_flags.sexp)
+ (deps gen_gtk_link_flags.sh)
+ (action
+  (with-stdout-to %{target}
+   (bash "./gen_gtk_link_flags.sh"))))
+
 (executable
  (name pascatho)
  (public_name pascatho)
  (modules pascatho gtk_ui)
  (libraries pascatho gtk_support cmdliner unix)
- (link_flags
-  (-cclib /usr/lib/x86_64-linux-gnu/libgtk-3.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libgdk-3.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libgobject-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libglib-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libgio-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libpangocairo-1.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libpango-1.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libharfbuzz.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libcairo.so.2)
-  (-cclib /lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libatk-1.0.so.0))
-)
+ (link_flags (:include gtk_link_flags.sexp)))
 
 (executable
  (name textTools)
  (public_name textTools)
  (modules textTools text_tools_ui)
  (libraries pascatho gtk_support cmdliner unix)
- (link_flags
-  (-cclib /usr/lib/x86_64-linux-gnu/libgtk-3.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libgdk-3.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libgobject-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libglib-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libgio-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libpangocairo-1.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libpango-1.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libharfbuzz.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libcairo.so.2)
-  (-cclib /lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0)
-  (-cclib /lib/x86_64-linux-gnu/libatk-1.0.so.0)))
+ (link_flags (:include gtk_link_flags.sexp)))
 
 (executable
  (name processSources)
