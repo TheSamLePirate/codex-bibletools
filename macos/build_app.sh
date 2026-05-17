@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # Build Pascatho.app for macOS.
 #
-# The bundle wraps the dune-built pascatho.exe with a launcher that points
-# PASCATHO_ROOT at the source checkout, so the .app stays small (~5 MB) and
-# always sees up-to-date datas/articles. Re-run after `dune build`.
+# Bundles the dune-built pascatho.exe together with the runtime resources
+# (datas/, articles/, highlights/, bg.jpeg, logo.jpeg) inside the .app so
+# the result is self-contained. Resources are copied (not symlinked) because
+# macOS TCC blocks access to ~/Documents, ~/Desktop, ~/Downloads from
+# unsigned apps launched via LaunchServices — symlinks are resolved before
+# the check and would still be denied.
+#
+# The .app ends up around 400 MB. Re-run after `dune build` or after
+# updating datas/articles. For iterative dev, use `dune exec pascatho`
+# directly.
 #
 # Outputs: dist/Pascatho.app
 
@@ -36,12 +43,25 @@ cp "$PLIST_SRC" "$CONTENTS/Info.plist"
 cp "$BINARY_SRC" "$MACOS_DIR/pascatho-bin"
 chmod +x "$MACOS_DIR/pascatho-bin"
 
-# Launcher: point PASCATHO_ROOT at the source checkout and exec the real binary.
-cat > "$MACOS_DIR/Pascatho" <<EOF
+# Copy runtime resources into the bundle. Project_root.is_project_root accepts
+# any directory containing both `datas` and `articles`, so dropping them here
+# with bg.jpeg / logo.jpeg / highlights is enough.
+echo "Copying runtime resources into the bundle (this can take a moment)..."
+for item in datas articles highlights bg.jpeg logo.jpeg; do
+  src="$REPO_ROOT/$item"
+  if [[ ! -e "$src" ]]; then
+    echo "build_app.sh: missing $src" >&2
+    exit 1
+  fi
+  cp -R "$src" "$RESOURCES_DIR/"
+done
+
+# Launcher: point PASCATHO_ROOT at the bundled Resources dir and exec the binary.
+cat > "$MACOS_DIR/Pascatho" <<'EOF'
 #!/bin/bash
-export PASCATHO_ROOT="$REPO_ROOT"
-DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-exec "\$DIR/pascatho-bin" "\$@"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PASCATHO_ROOT="$DIR/../Resources"
+exec "$DIR/pascatho-bin" "$@"
 EOF
 chmod +x "$MACOS_DIR/Pascatho"
 

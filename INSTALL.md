@@ -155,11 +155,12 @@ open dist/Pascatho.app
 
 Le script :
 - convertit `logo.jpeg` en `Pascatho.icns` via `sips` + `iconutil` (outils macOS natifs) ;
-- assemble `dist/Pascatho.app/` avec `Info.plist`, l'icône, et un lanceur `Contents/MacOS/Pascatho` qui définit `PASCATHO_ROOT` vers le checkout source avant d'exécuter le binaire.
+- copie les ressources runtime (`datas/`, `articles/`, `highlights/`, `bg.jpeg`, `logo.jpeg`) dans `Contents/Resources/` ;
+- assemble `dist/Pascatho.app/` avec `Info.plist`, l'icône et un lanceur `Contents/MacOS/Pascatho` qui exporte `PASCATHO_ROOT="$DIR/../Resources"` avant d'exécuter le binaire.
 
-Le bundle reste léger (~5 Mo) car il référence les fichiers `datas/`, `articles/`, `highlights/` du dépôt — déplacer ou supprimer le checkout casse l'application installée. Pour distribuer un `.app` autonome, copie ces dossiers dans `Contents/Resources/` et ajuste le launcher pour pointer `PASCATHO_ROOT` vers `"$DIR/../Resources"`.
+Le bundle pèse environ 400 Mo car il embarque les corpus. C'est nécessaire : macOS TCC bloque l'accès à `~/Documents`, `~/Desktop` et `~/Downloads` pour les applications non signées lancées depuis Finder, et les liens symboliques sont résolus avant le contrôle (ils seraient également refusés). En embarquant les ressources, le `.app` est autonome et peut être déplacé dans `/Applications`.
 
-Tu peux glisser `Pascatho.app` dans `/Applications` ; macOS suivra le lien vers le binaire et le repo source.
+Pour l'itération de développement, continue à utiliser `dune exec pascatho` qui charge les ressources directement depuis le dépôt sans passer par le bundle.
 
 ### Notes macOS
 
